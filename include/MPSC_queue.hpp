@@ -1,4 +1,30 @@
+/*
+MIT License
+
+Copyright (c) 2025 dakingffo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+#if defined(_MSC_VER) && _MSC_VER > 1000 || defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 3)
 #pragma once
+#endif
 
 #ifndef DAKING_MPSC_QUEUE_HPP
 #define DAKING_MPSC_QUEUE_HPP
@@ -6,7 +32,7 @@
 #include <utility>
 #include <atomic>
 #include <mutex>
-
+#include <iostream>
 namespace daking {
     /*
                  SC                MP
@@ -133,6 +159,7 @@ namespace daking {
             bool try_pop(node*& chunk) noexcept {
                 std::pair<node*, std::size_t> old_top = top.load(std::memory_order_relaxed);
                 std::pair<node*, std::size_t> new_top;
+
                 do {
                     if (!old_top.first) {
                         return false;
@@ -144,6 +171,7 @@ namespace daking {
                     std::memory_order_acq_rel,
                     std::memory_order_relaxed
                 ));
+
 				chunk = old_top.first;
                 return true;
             }
@@ -169,6 +197,7 @@ namespace daking {
         void enqueue(Ref&& value) {
             node* new_node = Allocate();
             new_node->value_ = std::forward<Ref>(value);
+
             node* old_head = head_.exchange(new_node, std::memory_order_release);
             old_head->next_.store(new_node, std::memory_order_release);
         }
@@ -223,6 +252,7 @@ namespace daking {
             size_type count = std::max(thread_local_capacity, global_node_count_);
             node* new_nodes = new node[count];
             global_page_list_.next_ = new page(new_nodes, global_page_list_.next_);
+
             for (size_type i = 0; i < count - 1; i++) {
                 new_nodes[i].next_ = new_nodes + i + 1;
                 if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {
@@ -245,16 +275,19 @@ namespace daking {
     };
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node* MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_list_ = nullptr;
+    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node* 
+        MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_list_ = nullptr;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::chunk_stack MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_chunk_stack{};
+    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::chunk_stack 
+        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_chunk_stack{};
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_node_count_ = 0;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::page MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_page_list_;
+    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::page 
+        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_page_list_;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_mutex_{};

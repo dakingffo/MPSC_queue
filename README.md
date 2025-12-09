@@ -1,10 +1,18 @@
 # MPSC_queue
 
 *lockfree boundless high performance MPSC queue*
-<br>
+
 *无锁的无界高性能MPSC队列*
 
+[简体中文](./README.zh.md) 
+
 ## STRUCTURE
+
+The MPSC queue utilizes a **Thread-Local Node Pool** and a **Wait-Free Global Chunk Stack** to minimize contention.
+Actually, heap operations only happend log(N) times, and thread_local or global operations both are O(1).
+
+No matter how many the thread_local pool size is, always O(1) to push or pop it from global chunk stack. (Pool As Chunk)
+
 ```mermaid
 flowchart TD
     classDef THREAD fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;
@@ -65,9 +73,6 @@ flowchart TD
     NextChunk2 -- "Empty: Request Page" --> GlobalMutex
 ```
 ## Performance Benchmark
-
-The MPSC queue utilizes a **Thread-Local Node Pool** and a **Wait-Free Global Chunk Stack** to minimize contention and eliminate runtime heap fragmentation.
-Actually, heap operations only happend log(N) times, and no matter thread_local or global operations are O(1).
 
 The results below demonstrate throughput (Million Operations per Second) under high concurrency stress.
 
@@ -153,6 +158,6 @@ daking::MPSC_queue<double> queue3;
 
 Just need to include `./include/MPSC_queue.hpp` in your project.
 
-## LICENSE:
+## LICENSE
 
 MPSC_queue is licensed under the [MIT License](./LICENSE.txt).

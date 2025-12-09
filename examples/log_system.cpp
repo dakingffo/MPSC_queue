@@ -39,7 +39,6 @@ struct LogEntry {
 
     LogEntry(LogEntry&& other) noexcept = default;
 
-    // 移动赋值运算符：使用默认实现
     LogEntry& operator=(LogEntry&& other) noexcept = default;
 
     LogEntry(const LogEntry&) = delete;
@@ -63,7 +62,6 @@ void log_consumer_thread(const std::string& filename) {
             const char* level_str = (entry.level == LogLevel::INFO) ? "INFO" :
                 (entry.level == LogLevel::WARN) ? "WARN" : "ERROR";
 
-            // 直接输出 char[]，性能更高
             log_file << "[" << entry.timestamp << "] "
                 << "[" << level_str << "] "
                 << entry.message << "\n";
