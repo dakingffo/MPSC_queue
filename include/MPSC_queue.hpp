@@ -73,11 +73,13 @@ namespace daking {
 		 3. Customizable ThreadLocalCapacity and Alignment.
     */
     template <typename Ty, std::size_t ThreadLocalCapacity = 128,
-        std::size_t Align = std::hardware_destructive_interference_size>
+        std::size_t Align = 64 /* std::hardware_destructive_interference_size */>
     class MPSC_queue {
     public:
-		static_assert(std::is_default_constructible_v<Ty>, "Ty must be default constructible");
-		static_assert((ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2");
+        static_assert(std::is_object_v<Ty>, "Ty must be object.");
+		static_assert(std::is_default_constructible_v<Ty>, "Ty must be default constructible.");
+        static_assert(std::is_move_constructible_v<Ty>, "Ty must be move constructible.");
+		static_assert((ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2.");
 
         using value_type = Ty;
         using size_type  = std::size_t;
