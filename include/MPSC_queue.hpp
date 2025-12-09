@@ -139,16 +139,21 @@ namespace daking {
         };
 
         struct chunk_stack {
+            struct tagged_ptr {
+                node*     node_ = nullptr;
+                size_type tag_  = 0;
+            };
+
             chunk_stack()  = default;
             ~chunk_stack() = default;
 
             void push(node* chunk) noexcept {
-                std::pair<node*, std::size_t> new_top(chunk, 0);
-                std::pair<node*, std::size_t> old_top = top.load(std::memory_order_relaxed);
+                tagged_ptr new_top{ chunk, 0 };
+                tagged_ptr old_top = top.load(std::memory_order_relaxed);
 
                 do {
-                    new_top.first->next_chunk_ = old_top.first;
-					new_top.second = old_top.second + 1;
+                    new_top.node_->next_chunk_ = old_top.node_;
+					new_top.tag_ = old_top.tag_ + 1;
                 } while (!top.compare_exchange_weak(
                     old_top, new_top,    
                     std::memory_order_acq_rel, 
@@ -157,26 +162,26 @@ namespace daking {
             }
 
             bool try_pop(node*& chunk) noexcept {
-                std::pair<node*, std::size_t> old_top = top.load(std::memory_order_relaxed);
-                std::pair<node*, std::size_t> new_top;
+                tagged_ptr old_top = top.load(std::memory_order_relaxed);
+                tagged_ptr new_top;
 
                 do {
-                    if (!old_top.first) {
+                    if (!old_top.node_) {
                         return false;
                     }
-                    new_top.first = old_top.first->next_chunk_;
-					new_top.second = old_top.second + 1;
+                    new_top.node_ = old_top.node_->next_chunk_;
+					new_top.tag_ = old_top.tag_ + 1;
                 } while (!top.compare_exchange_weak(
                     old_top, new_top,   
                     std::memory_order_acq_rel,
                     std::memory_order_relaxed
                 ));
 
-				chunk = old_top.first;
+				chunk = old_top.node_;
                 return true;
             }
 
-            std::atomic<std::pair<node*, std::size_t>> top{};
+            std::atomic<tagged_ptr> top{};
         };
 
     public:
@@ -246,7 +251,7 @@ namespace daking {
 
         void Reserve_global() {
 			std::lock_guard<std::mutex> lock(global_mutex_);
-            if (global_chunk_stack.top.load(std::memory_order_acquire).first) {
+            if (global_chunk_stack.top.load(std::memory_order_acquire).node_) {
                 return;
 			}
             size_type count = std::max(thread_local_capacity, global_node_count_);

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 
 if(CMAKE_BUILD_TYPE MATCHES "Release")
-    set(DEFAULT_RELEASE_OPTS "$<$<CXX_COMPILER_ID:MSVC>:/O2 /Ob2> $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3>")
+    set(DEFAULT_RELEASE_OPTS "$<$<CXX_COMPILER_ID:MSVC>:/O2 /Ob2>$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3>")
 endif()
 
 include(FetchContent)
@@ -31,7 +31,8 @@ target_include_directories(mpsc_bench PRIVATE
 
 target_link_libraries(mpsc_bench PRIVATE 
     benchmark::benchmark_main
-    Threads::Threads
+    Threads::Threads 
+    atomic
 )
 
 target_compile_options(mpsc_bench PRIVATE ${DEFAULT_RELEASE_OPTS})
@@ -45,7 +46,8 @@ target_include_directories(mpsc_log_example PRIVATE
 )
 
 target_link_libraries(mpsc_log_example PRIVATE 
-    Threads::Threads
+    Threads::Threads 
+    atomic
 )
 
 target_compile_options(mpsc_log_example PRIVATE ${DEFAULT_RELEASE_OPTS})
@@ -59,7 +61,8 @@ target_include_directories(mpsc_command_dispatcher PRIVATE
 )
 
 target_link_libraries(mpsc_command_dispatcher PRIVATE 
-    Threads::Threads
+    Threads::Threads 
+    atomic
 )
 
 target_compile_options(mpsc_command_dispatcher PRIVATE ${DEFAULT_RELEASE_OPTS})
