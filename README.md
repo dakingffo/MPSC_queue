@@ -11,7 +11,7 @@
 The MPSC queue utilizes a **Thread-Local Node Pool** and a **Wait-Free Global Chunk Stack** to minimize contention.
 Actually, heap operations only happend log(N) times, and thread_local or global operations both are O(1).
 
-No matter how many the thread_local pool size is, always O(1) to push or pop it from global chunk stack. (Pool As Chunk)
+No matter how much the thread_local pool size is, always O(1) to push or pop it from global chunk stack. (Pool As Chunk)
 
 ```mermaid
 flowchart TD
