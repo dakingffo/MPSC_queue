@@ -1,0 +1,211 @@
+﻿{
+  "version": 3,
+  "configurePresets": [
+
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+
+    {
+      "name": "linux-asan-base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "$env{CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer",
+        "CMAKE_C_FLAGS": "$env{CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "$env{CMAKE_EXE_LINKER_FLAGS} -fsanitize=address",
+        "CMAKE_MODULE_LINKER_FLAGS": "$env{CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address",
+        "CMAKE_SHARED_LINKER_FLAGS": "$env{CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address"
+      }
+    },
+
+    {
+      "name": "linux-tsan-base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "$env{CMAKE_CXX_FLAGS} -fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_C_FLAGS": "$env{CMAKE_C_FLAGS} -fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "$env{CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread",
+        "CMAKE_MODULE_LINKER_FLAGS": "$env{CMAKE_MODULE_LINKER_FLAGS} -fsanitize=thread",
+        "CMAKE_SHARED_LINKER_FLAGS": "$env{CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread"
+      }
+    },
+
+
+    {
+      "name": "msvc-x64-base",
+      "inherits": "windows-base",
+      "hidden": true,
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_CXX_FLAGS": "$env{CMAKE_CXX_FLAGS} /EHsc",
+        "CMAKE_C_FLAGS": "$env{CMAKE_C_FLAGS} /EHsc"
+      }
+    },
+    {
+      "name": "msvc-x64-debug",
+      "displayName": "MSVC x64 Debug",
+      "inherits": "msvc-x64-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "msvc-x64-release",
+      "displayName": "MSVC x64 Release",
+      "inherits": "msvc-x64-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "msvc-x64-relwithstack",
+      "displayName": "MSVC x64 Rel (Debug Stack)",
+      "description": "Release 优化级别，但保留调试符号和完整的调用堆栈。",
+      "inherits": "msvc-x64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "/Zi /Oy- /EHsc $env{CMAKE_CXX_FLAGS}",
+        "CMAKE_C_FLAGS": "/Zi /Oy- /EHsc $env{CMAKE_C_FLAGS}",
+        "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
+        "CMAKE_MODULE_LINKER_FLAGS": "/DEBUG",
+        "CMAKE_SHARED_LINKER_FLAGS": "/DEBUG"
+      }
+    },
+    {
+      "name": "msvc-x86-base",
+      "inherits": "windows-base",
+      "hidden": true,
+      "architecture": {
+        "value": "x86",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_CXX_FLAGS": "$env{CMAKE_CXX_FLAGS} /EHsc",
+        "CMAKE_C_FLAGS": "$env{CMAKE_C_FLAGS} /EHsc"
+      }
+    },
+    {
+      "name": "msvc-x86-debug",
+      "displayName": "MSVC x86 Debug",
+      "inherits": "msvc-x86-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "msvc-x86-release",
+      "displayName": "MSVC x86 Release",
+      "inherits": "msvc-x86-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+
+
+    {
+      "name": "linux-gcc-base",
+      "inherits": "linux-base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "linux-gcc-debug-asan",
+      "displayName": "Linux GCC Debug (ASan)",
+      "description": "Linux/WSL GCC Debug，启用 Address Sanitizer",
+      "inherits": [ "linux-gcc-base", "linux-asan-base" ],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+
+    {
+      "name": "linux-gcc-debug",
+      "displayName": "Linux GCC Debug",
+      "inherits": "linux-gcc-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC Release",
+      "inherits": "linux-gcc-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+
+
+    {
+      "name": "linux-clang-base",
+      "inherits": "linux-base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux-clang-debug-asan",
+      "displayName": "Linux Clang Debug (ASan)",
+      "description": "Linux/WSL Clang Debug，启用 Address Sanitizer",
+      "inherits": [ "linux-clang-base", "linux-asan-base" ],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-clang-debug-tsan",
+      "displayName": "Linux Clang Debug (TSan)",
+      "description": "Linux/WSL Clang Debug，启用 Thread Sanitizer",
+      "inherits": [ "linux-clang-base", "linux-tsan-base" ],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+
+    {
+      "name": "linux-clang-release-asan",
+      "displayName": "Linux Clang Release (ASan)",
+      "description": "Linux/WSL Clang Release，启用 Address Sanitizer",
+      "inherits": [ "linux-clang-base", "linux-asan-base" ],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "linux-clang-release-tsan",
+      "displayName": "Linux Clang Release (TSan)",
+      "description": "Linux/WSL Clang Release，启用 Thread Sanitizer",
+      "inherits": [ "linux-clang-base", "linux-tsan-base" ],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+
+    {
+      "name": "linux-clang-debug",
+      "displayName": "Linux Clang Debug",
+      "inherits": "linux-clang-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-clang-release",
+      "displayName": "Linux Clang Release",
+      "inherits": "linux-clang-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+
+  ]
+}
