@@ -56,8 +56,8 @@ namespace daking {
 
 		 ADVANTAGES:
 		 1. Only log(N) times to lock the global mutex to new nodes, memory allocation overhead is greatly reduced.
-		 2. Very fast enqueue and dequeue operations, both are O(1) operations.(Michael & Scott)
-		 3. Thread local pool to reduce contention on the global pool.(Dmitry Vyukov)
+		 2. Very fast enqueue and dequeue operations, both are O(1) operations.(Dmitry Vyukov)
+		 3. Thread local pool to reduce contention on the global pool.
 		 3. Very fast allocation and deallocation of thread_local pool, both are O(1) operations by pointer exchange.
 		 4. Relieve pointer chase by allocating nodes in pages.
 
@@ -173,21 +173,20 @@ namespace daking {
 
         bool try_dequeue(value_type& result) noexcept {
 			node* next = tail_->next_.load(std::memory_order_acquire);
-            if (!next) {
-                return false;
-            }
-            else {
+            if (next) [[likely]]{
                 result = std::move(next->value_);
                 node* old_tail = tail_;
                 tail_ = next;
                 Deallocate(old_tail);
                 return true;
             }
+            else {
+                return false;
+            }
         }
 
         bool empty_approx() const noexcept {
-            std::atomic_thread_fence(std::memory_order_acquire);
-            return tail_->next_ == nullptr;
+            return tail_->next_.load(std::memory_order_acquire) == nullptr;
 		}
 
     private:

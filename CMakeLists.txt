@@ -37,7 +37,7 @@ target_link_libraries(mpsc_bench PRIVATE
 target_compile_options(mpsc_bench PRIVATE ${DEFAULT_RELEASE_OPTS})
 
 
-add_executable(mpsc_log_example examples/log.cpp)
+add_executable(mpsc_log_example "examples/log_system.cpp")
 
 target_include_directories(mpsc_log_example PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/include

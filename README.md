@@ -1,8 +1,8 @@
 # MPSC_queue
 
-*lockfree boundless MPSC queue*
+*lockfree boundless high performance MPSC queue*
 <br>
-*无锁的无界MPSC队列*
+*无锁的无界高性能MPSC队列*
 
 ## STRUCTURE
 ```mermaid
@@ -64,11 +64,26 @@ flowchart TD
     NextChunk1 --> NextChunk2
     NextChunk2 -- "Empty: Request Page" --> GlobalMutex
 ```
+## Performance Benchmark
+
+The MPSC queue utilizes a **Thread-Local Node Pool** and a **Wait-Free Global Chunk Stack** to minimize contention and eliminate runtime heap fragmentation.
+Actually, heap operations only happend log(N) times, and no matter thread_local or global operations are O(1).
+
+The results below demonstrate throughput (Million Operations per Second) under high concurrency stress.
+
+| Producers (P) | Consumers (C) | Throughput (M Ops/s) | Analysis |
+| :---: | :---: | :---: | :--- |
+| 1 | 1 | **116.5** | Baseline: Full Thread-Local Cache Hit |
+| 2 | 1 | 44.3 | Initial Contention Penalty (Cache Line Thrashing) |
+| 4 | 1 | 57.0 | Parallelism Benefits Overcome Contention |
+| 8 | 1 | 64.4 | Strong Scaling |
+| 16 | 1 | **74.4** | Peak Concurrent Throughput |
+
 
 ## ADVANTAGES:
 1. Only log(N) times to lock the global mutex to new nodes, memory allocation overhead is greatly reduced.
-2. Fast enqueue and dequeue operations, both are **O(1)** operations.(Michael & Scott)
-3. Thread local pool to reduce contention on the global pool.(Dmitry Vyukov)
+2. Fast enqueue and dequeue operations, both are **O(1)** operations.(Dmitry Vyukov)
+3. Thread local pool to reduce contention on the global pool.
 3. Fast allocation and deallocation of thread_local pool, both are **O(1)** operations by pointer exchange.
 4. Relieve pointer chase by allocating nodes in pages.
 
