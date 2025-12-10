@@ -101,9 +101,8 @@ CPU Caches:
 4. Relieve pointer chase by allocating nodes in pages.
 
 ## DISADVANTAGES:
-1. Slightly higher memory usage due to the next_chunk_ pointer in each node.
-2. Can't free memory if any instance is alive, because all nodes have been disrupted and combined freely.
-3. ThreadLocalCapacity is fixed at compile time.
+1. Can't free memory if any instance is alive, because all nodes have been disrupted and combined freely.
+2. ThreadLocalCapacity is fixed at compile time.
 
 ## FEATURES:
 1. Multiple producers, single consumer.

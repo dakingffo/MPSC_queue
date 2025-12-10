@@ -106,9 +106,8 @@ CPU Caches:
 
 ## 劣势 (DISADVANTAGES)
 
-1.  由于每个节点额外需要一个 `next_chunk_` 指针，内存使用量略高。
-2.  如果还有任何MPSC_queue实例存活，则**无法释放内存**，因为所有节点已被自由地打乱和组合。
-4.  `ThreadLocalCapacity`（线程本地容量）在**编译时**已固定。
+1.  如果还有任何MPSC_queue实例存活，则**无法释放内存**，因为所有节点已被自由地打乱和组合。
+2.  `ThreadLocalCapacity`（线程本地容量）在**编译时**已固定。
 
 
 ## 特性 (FEATURES)
