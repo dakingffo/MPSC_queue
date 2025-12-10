@@ -73,12 +73,18 @@ BENCHMARK(BM_MPSC_Throughput)
 BENCHMARK_MAIN();
 
 /*
+Run on (16 X 3992 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x8)
+  L1 Instruction 32 KiB (x8)
+  L2 Unified 1024 KiB (x8)
+  L3 Unified 16384 KiB (x1)
 ----------------------------------------------------------------------------------------------------------------
 Benchmark                                                      Time             CPU   Iterations UserCounters...
 ----------------------------------------------------------------------------------------------------------------
-BM_MPSC_Throughput/1/min_warmup_time:2.000/real_time   789803100 ns        0.000 ns            1 items_per_second=126.614M/s P=1, C=1
-BM_MPSC_Throughput/2/min_warmup_time:2.000/real_time  2059432600 ns        0.000 ns            1 items_per_second=48.5571M/s P=2, C=1
-BM_MPSC_Throughput/4/min_warmup_time:2.000/real_time  1662831100 ns        0.000 ns            1 items_per_second=60.1384M/s P=4, C=1
-BM_MPSC_Throughput/8/min_warmup_time:2.000/real_time  2407692500 ns        0.000 ns            1 items_per_second=41.5335M/s P=8, C=1
-BM_MPSC_Throughput/16/min_warmup_time:2.000/real_time 2558583600 ns        0.000 ns            1 items_per_second=39.0841M/s P=16, C=1
+BM_MPSC_Throughput/1/min_warmup_time:2.000/real_time   646155300 ns        0.000 ns            1 items_per_second=154.762M/s P=1, C=1
+BM_MPSC_Throughput/2/min_warmup_time:2.000/real_time  2198097700 ns        0.000 ns            1 items_per_second=45.4939M/s P=2, C=1
+BM_MPSC_Throughput/4/min_warmup_time:2.000/real_time  1622892300 ns        0.000 ns            1 items_per_second=61.6184M/s P=4, C=1
+BM_MPSC_Throughput/8/min_warmup_time:2.000/real_time  1929366300 ns        0.000 ns            1 items_per_second=51.8305M/s P=8, C=1
+BM_MPSC_Throughput/16/min_warmup_time:2.000/real_time 2108079600 ns        0.000 ns            1 items_per_second=47.4365M/s P=16, C=1
 */

@@ -33,6 +33,8 @@ SOFTWARE.
 #include <atomic>
 #include <mutex>
 #include <iostream>
+#include <vector>
+
 namespace daking {
     /*
                  SC                MP
@@ -46,8 +48,8 @@ namespace daking {
 
                       ...
 
-		 All MPSC_queue instances share a global pool of nodes to reduce memory allocation overhead.
-         The consumer of each MPSC_queue could be different.
+		 Although all alive MPSC_queue instances share a global pool of nodes to reduce memory allocation overhead,
+         the consumer of each MPSC_queue could be different.
 
 		 All producers has a thread_local pool of nodes to reduce contention on the global pool,
 		 and the cost of getting nodes from the global pool is O(1) , no matter ThreadLocalCapacity is 256 or larger.
@@ -55,13 +57,13 @@ namespace daking {
 		 when allocate nodes from the global pool, we always pop a chunk from the stack, this is a cheap pointer exchange operation.
 		 And the consumer thread will push back the chunk to the global pool when its thread_local pool is full.
 
-		 The chunk is freely combined of nodes, i.e., the nodes in a chunk are not required to be contiguous in memory.
+		 The chunk is freely combined of nodes, and the nodes in a chunk are not required to be contiguous in memory.
 		 To achieve this, every node has a next_chunk_ pointer , and all of the nodes in a chunk are linked together via next_ pointer,
 
 		 In MPMC_queue instance, wo focus on the next_ pointer, which is used to link the nodes in the queue.
 		 And in chunk_stack, we focus on the next_chunk_ pointer, which is used to link the nodes in a chunk.
 
-		 The page list is used to manage the memory of nodes allocated from global pool, when main function ends, all pages will be deleted automatically.
+		 The page list is used to manage the memory of nodes allocated from global pool, when the last instance is destructed, all pages will be deleted automatically.
 
          Page:
                 Blue                                Green                               Red
@@ -79,48 +81,33 @@ namespace daking {
 				 ...              There is no memory ABA problem because the global pool is just a stack of empty chunks, and We don't care about the order of nodes in the global pool,
 				  ↓               But ABA problem still exists when read next_chunk_ and compare stack top pointer, so we use tagged pointer to avoid it.
                nullptr
-
-		 ADVANTAGES:
-		 1. Only log(N) times to lock the global mutex to new nodes, memory allocation overhead is greatly reduced.
-		 2. Very fast enqueue and dequeue operations, both are O(1) operations.(Dmitry Vyukov)
-		 3. Thread local pool to reduce contention on the global pool.
-		 3. Very fast allocation and deallocation of thread_local pool, both are O(1) operations by pointer exchange.
-		 4. Relieve pointer chase by allocating nodes in pages.
-
-		 DISADVANTAGES:
-		 1. Slightly higher memory usage due to the next_chunk_ pointer in each node.
-		 2. Can't free memory while the program is running, because all nodes have been disrupted and combined freely.
-		 4. Should ensure all producers and consumer threads have ended before main function ends, otherwise will be an UB.
-		 3. ThreadLocalCapacity is fixed at compile time.
-
-		 FEATURES:
-		 1. Multiple producers, single consumer.
-		 2. All MPSC_queue instances share a global pool, but the consumer of each MPSC_queue could be different.
-		 3. Customizable ThreadLocalCapacity and Alignment.
     */
     template <typename Ty, std::size_t ThreadLocalCapacity = 256,
         std::size_t Align = 64 /* std::hardware_destructive_interference_size */>
     class MPSC_queue {
     public:
         static_assert(std::is_object_v<Ty>, "Ty must be object.");
-		static_assert(std::is_default_constructible_v<Ty>, "Ty must be default constructible.");
         static_assert(std::is_move_constructible_v<Ty>, "Ty must be move constructible.");
 		static_assert((ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2.");
 
-        using value_type = Ty;
-        using size_type  = std::size_t;
+        using value_type      = Ty;
+        using size_type       = std::size_t;
+        using reference       = value_type&;
+        using const_reference = const value_type&;
 
         static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
         static constexpr std::size_t align                 = Align;
 
     private:
         struct node {
-            node()  = default;
+            node() : next_chunk_(nullptr), next_(nullptr) {}
             ~node() = default;
 
-            value_type         value_{};
-            std::atomic<node*> next_       = nullptr;
-            node*              next_chunk_ = nullptr;
+            union {
+                value_type      value_;
+                node*           next_chunk_;
+            };
+            std::atomic<node*>  next_;
         };
 
         struct page {
@@ -146,6 +133,10 @@ namespace daking {
 
             chunk_stack()  = default;
             ~chunk_stack() = default;
+
+            void reset() noexcept {
+                top.store(tagged_ptr{ nullptr, 0 });
+			}
 
             void push(node* chunk) noexcept {
                 tagged_ptr new_top{ chunk, 0 };
@@ -186,31 +177,52 @@ namespace daking {
 
     public:
         MPSC_queue() {
-            node* dummy = Allocate();
-            head_.store(dummy, std::memory_order_release);
-            tail_ = dummy;
+            global_instance_count_++;
+            {   
+                std::lock_guard<std::mutex> lock(global_mutex_);
+                global_thread_local_manager_.push_back({ &thread_local_node_list_, &thread_local_node_count_ });
+            }
+            Initial();
         }
 
-        ~MPSC_queue() = default; // Not manage memory
+        ~MPSC_queue() {
+            Final();
+            if (--global_instance_count_ == 0) {
+				std::lock_guard<std::mutex> lock(global_mutex_);
+                if (global_instance_count_ == 0) {
+                    Free_global();
+                }
+            }
+        }
 
         MPSC_queue(const MPSC_queue&)            = delete;
         MPSC_queue(MPSC_queue&&)                 = delete;
         MPSC_queue& operator=(const MPSC_queue&) = delete;
         MPSC_queue& operator=(MPSC_queue&&)      = delete;
 
-        template <typename Ref>
-        void enqueue(Ref&& value) {
+        template <typename...Args>
+        void emplace(Args&&... args) {
             node* new_node = Allocate();
-            new_node->value_ = std::forward<Ref>(value);
+            new (std::addressof(new_node->value_)) value_type(std::forward<Args>(args)...);
 
             node* old_head = head_.exchange(new_node, std::memory_order_release);
             old_head->next_.store(new_node, std::memory_order_release);
+        }
+
+        void enqueue(const_reference value) {
+            emplace(value);
+        }
+
+        void enqueue(value_type&& value) {
+            emplace(std::move(value));
         }
 
         bool try_dequeue(value_type& result) noexcept {
 			node* next = tail_->next_.load(std::memory_order_acquire);
             if (next) [[likely]]{
                 result = std::move(next->value_);
+                next->value_.~value_type();
+
                 node* old_tail = tail_;
                 tail_ = next;
                 Deallocate(old_tail);
@@ -226,6 +238,19 @@ namespace daking {
 		}
 
     private:
+        void Initial() {
+            node* dummy = Allocate();
+            head_.store(dummy, std::memory_order_release);
+            tail_ = dummy;
+        }
+
+        void Final() {
+            while (tail_->next_) {
+                tail_ = tail_->next_;
+                tail_->value_.~value_type();
+            }
+        }
+
         node* Allocate() {
             if (!thread_local_node_list_) [[unlikely]] {
                 while (!global_chunk_stack.try_pop(thread_local_node_list_)) {
@@ -238,14 +263,12 @@ namespace daking {
         }
 
         void Deallocate(node* nd) noexcept {
-            thread_local static size_type count = 0;
-
             nd->next_ = thread_local_node_list_;
             thread_local_node_list_ = nd;
-            if (++count >= thread_local_capacity) [[unlikely]] {
+            if (++thread_local_node_count_ >= thread_local_capacity) [[unlikely]] {
 				global_chunk_stack.push(thread_local_node_list_);
                 thread_local_node_list_ = nullptr;
-                count = 0;
+                thread_local_node_count_ = 0;
             }
         }
 
@@ -268,12 +291,31 @@ namespace daking {
             global_node_count_ += count;
         }
 
-        thread_local static node* thread_local_node_list_;
+        void Free_global() {
+            /* Already locked */
+            delete global_page_list_.next_;
+            global_page_list_.next_ = nullptr;
 
-        static chunk_stack global_chunk_stack;
-        static std::size_t global_node_count_;
-        static page        global_page_list_;
-        static std::mutex  global_mutex_;
+            for (auto [ptr, size] : global_thread_local_manager_) {
+                *ptr = nullptr;
+                *size = 0;
+            }
+            global_thread_local_manager_.clear();
+
+            global_node_count_ = 0;
+            global_chunk_stack.reset();
+        }
+
+        static chunk_stack                                global_chunk_stack;
+        static std::atomic_size_t                         global_instance_count_;
+
+        static std::mutex                                 global_mutex_;
+        static size_type                                  global_node_count_;
+        static page                                       global_page_list_;
+        static std::vector<std::pair<node**, size_type*>> global_thread_local_manager_;
+
+        thread_local static node*         thread_local_node_list_;
+        thread_local static size_type     thread_local_node_count_;
 
         alignas(align) std::atomic<node*> head_;
         alignas(align) node*              tail_;
@@ -284,8 +326,21 @@ namespace daking {
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_list_ = nullptr;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
+    thread_local std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_count_ = 0;
+
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::chunk_stack 
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_chunk_stack{};
+
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
+    std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_instance_count_ = 0;
+
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
+    std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_mutex_{};
+
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
+    std::vector<std::pair<typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node**, std::size_t*>>
+        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_thread_local_manager_{};
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_node_count_ = 0;
@@ -293,9 +348,6 @@ namespace daking {
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::page 
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_page_list_;
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_mutex_{};
 }
 
 #endif // !DAKING_MPSC_QUEUE_HPP

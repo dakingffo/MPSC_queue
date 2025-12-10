@@ -86,11 +86,11 @@ CPU Caches:
   
 | Producers (P) | Consumers (C) | Throughput (M Ops/s) | Analysis |
 | :---: | :---: | :---: | :--- |
-| 1 | 1 | **126.6** | Baseline: Full Thread-Local Cache Hit |
-| 2 | 1 | 48.6 | Initial Contention Penalty (Cache Line Thrashing) |
-| 4 | 1 | **60.1** | Peak Concurrent Throughput |
-| 8 | 1 | 41.5 | Fall back |
-| 16 | 1 | 39.1 | Stabilize |
+| 1 | 1 | **154.8** | Baseline: Full Thread-Local Cache Hit |
+| 2 | 1 | 45.5 | Initial Contention Penalty (Cache Line Thrashing) |
+| 4 | 1 | **61.6** | Peak Concurrent Throughput |
+| 8 | 1 | 51.8 | Fall back |
+| 16 | 1 | 47.4 | Stabilize |
 
 
 ## ADVANTAGES:
@@ -102,13 +102,12 @@ CPU Caches:
 
 ## DISADVANTAGES:
 1. Slightly higher memory usage due to the next_chunk_ pointer in each node.
-2. Can't free memory while the program is running, because all nodes have been disrupted and combined freely.
-4. Should ensure all producers and consumer threads have ended before main function ends, otherwise will be an UB.
+2. Can't free memory if any instance is alive, because all nodes have been disrupted and combined freely.
 3. ThreadLocalCapacity is fixed at compile time.
 
 ## FEATURES:
 1. Multiple producers, single consumer.
-2. All MPSC_queue instances share a global pool, but the consumer of each MPSC_queue could be different.
+2. All MPSC_queue instances share a global pool, but the consumer of each MPSC_queue could be different. The global pool will be freed by the last instance.
 3. Customizable ThreadLocalCapacity and Alignment.
 
 ## Usage
@@ -129,7 +128,6 @@ while !(queue.try_dequeue(get)) {
     }
 }
 ```
-**Warning: Ensure all producers and consumer threads have ended before main function ends!**
 
 ### Customizable ThreadLocalCapacity and Alignment
 ```C++
