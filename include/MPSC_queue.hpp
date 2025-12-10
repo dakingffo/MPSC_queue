@@ -98,7 +98,7 @@ namespace daking {
 		 2. All MPSC_queue instances share a global pool, but the consumer of each MPSC_queue could be different.
 		 3. Customizable ThreadLocalCapacity and Alignment.
     */
-    template <typename Ty, std::size_t ThreadLocalCapacity = 128,
+    template <typename Ty, std::size_t ThreadLocalCapacity = 256,
         std::size_t Align = 64 /* std::hardware_destructive_interference_size */>
     class MPSC_queue {
     public:

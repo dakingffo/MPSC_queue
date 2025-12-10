@@ -79,13 +79,21 @@ flowchart TD
 
 以下结果展示了在高并发压力下，队列的**吞吐量（Million Operations per Second，百万操作每秒）**。
 
+Compiler: **MSVC**
+Run on (16 X 3992 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x8)
+  L1 Instruction 32 KiB (x8)
+  L2 Unified 1024 KiB (x8)
+  L3 Unified 16384 KiB (x1)
+
 | 生产者 (P) | 消费者 (C) | 吞吐量 (M Ops/s) | 分析 |
 | :---: | :---: | :---: | :--- |
-| 1 | 1 | **116.5** | 基准性能：完全命中线程本地缓存 |
-| 2 | 1 | 44.3 | 初次竞争开销（Cache Line Thrashing，缓存行颠簸） |
-| 4 | 1 | 57.0 | 并行优势克服竞争 |
-| 8 | 1 | 64.4 | **强扩展性（Strong Scaling）** |
-| 16 | 1 | **74.4** | 峰值并发吞吐量 |
+| 1 | 1 | **126.6** | 基准性能：完全命中线程本地缓存 |
+| 2 | 1 | 48.6 | 初次竞争开销（Cache Line Thrashing，缓存行颠簸） |
+| 4 | 1 | **60.1** | 峰值并发吞吐量 |
+| 8 | 1 | 41.5 | 回落 |
+| 16 | 1 | 39.1 | 逐渐稳定 |
 
 ## 优势
 

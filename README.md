@@ -76,13 +76,21 @@ flowchart TD
 
 The results below demonstrate throughput (Million Operations per Second) under high concurrency stress.
 
+Compiler: **MSVC**
+Run on (16 X 3992 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x8)
+  L1 Instruction 32 KiB (x8)
+  L2 Unified 1024 KiB (x8)
+  L3 Unified 16384 KiB (x1)
+  
 | Producers (P) | Consumers (C) | Throughput (M Ops/s) | Analysis |
 | :---: | :---: | :---: | :--- |
-| 1 | 1 | **116.5** | Baseline: Full Thread-Local Cache Hit |
-| 2 | 1 | 44.3 | Initial Contention Penalty (Cache Line Thrashing) |
-| 4 | 1 | 57.0 | Parallelism Benefits Overcome Contention |
-| 8 | 1 | 64.4 | Strong Scaling |
-| 16 | 1 | **74.4** | Peak Concurrent Throughput |
+| 1 | 1 | **126.6** | Baseline: Full Thread-Local Cache Hit |
+| 2 | 1 | 48.6 | Initial Contention Penalty (Cache Line Thrashing) |
+| 4 | 1 | **60.1** | Peak Concurrent Throughput |
+| 8 | 1 | 41.5 | Fall back |
+| 16 | 1 | 39.1 | Stabilize |
 
 
 ## ADVANTAGES:
