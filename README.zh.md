@@ -1,6 +1,6 @@
 # MPSC_queue
 
-*lockfree boundless high performance MPSC queue*
+*lockfree unbounded high performance MPSC queue*
 
 *无锁的无界高性能MPSC队列*
 
@@ -8,7 +8,7 @@
 
 ## 结构设计
 
-该队列的核心设计在于使用**线程本地节点池Thread-Local Node Pool**和**无等待全局块栈Wait-Free Global Chunk Stack**来最小化竞争。
+该队列的核心设计在于使用**线程本地节点池Thread-Local Node Pool**和**无锁全局块栈Lock-Free Global Chunk Stack**来最小化竞争。
 
 不论线程本地池的大小是多少，总是以O(1)的速度弹出或压入全局块栈。（本地池就是块）
 
@@ -99,23 +99,24 @@ CPU Caches:
 
 1.  仅有 $\log(N)$ 次需要锁定**全局互斥锁global mutex**来分配新节点，极大地减少了内存分配的开销。
 2.  快速的 **Enqueue（入队）** 和 **Dequeue（出队）** 操作，两者都是 **$O(1)$** 复杂度。（来自 Dmitry Vyukov）
-3.  通过**线程本地池**设计，减少了对全局池的竞争。
-4.  **线程本地池**的分配和释放（deallocation）速度极快，两者都是通过指针交换实现的 **$O(1)$** 操作。
+3.  通过**线程本地池**设计，减少了对全局资源的竞争。
+4.  **全局块栈**对**线程本地池**的分配和释放（deallocation）速度极快，两者都是通过指针交换实现的 **$O(1)$** 操作。
 5.  通过以**页pages**为单位分配节点，有助于缓解指针追逐。
+6.  复用节点的数据字段作为**next_chunk指针**, 显然这两个数据在同一时间是互斥的。
 
 
 ## 劣势 (DISADVANTAGES)
 
 1.  如果还有任何MPSC_queue实例存活，则**无法释放内存**，因为所有节点已被自由地打乱和组合。
 2.  `ThreadLocalCapacity`（线程本地容量）在**编译时**已固定。
-
+3.  无法避免指针追逐，因为是纯链表结构。
 
 ## 特性 (FEATURES)
 
 1.  多生产者，单消费者（MPSC）。
 2.  所有具有**相同模板参数**的 `MPSC_queue` 实例共享**全局池**，但每个 `MPSC_queue` 的消费者可以是不同的，全局池由最后一个实例释放。
 3.  可自定义 `ThreadLocalCapacity`（线程本地容量）和 `Alignment`（对齐方式）。
-
+4.  名义上的`chunk`实际是一段链表节点的自由组合。
 
 ## 用法 (Usage)
 
@@ -175,6 +176,7 @@ daking::MPSC_queue<double> queue3;
 ## 安装 (Installation)
 
 只需在您的项目中包含 `./include/MPSC_queue.hpp` 文件即可。
+对于GCC/Clang，您需要额外链接atomic库。
 
 -----
 

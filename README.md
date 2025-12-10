@@ -1,6 +1,6 @@
 # MPSC_queue
 
-*lockfree boundless high performance MPSC queue*
+*lockfree unbounded high performance MPSC queue*
 
 *无锁的无界高性能MPSC队列*
 
@@ -8,7 +8,7 @@
 
 ## STRUCTURE
 
-The MPSC queue utilizes a **Thread-Local Node Pool** and a **Wait-Free Global Chunk Stack** to minimize contention.
+The MPSC queue utilizes a **Thread-Local Node Pool** and a **Lock-Free Global Chunk Stack** to minimize contention.
 Actually, heap operations only happend log(N) times, and thread_local or global operations both are O(1).
 
 No matter how much the thread_local pool size is, always O(1) to push or pop it from global chunk stack. (Pool As Chunk)
@@ -96,18 +96,21 @@ CPU Caches:
 ## ADVANTAGES:
 1. Only log(N) times to lock the global mutex to new nodes, memory allocation overhead is greatly reduced.
 2. Fast enqueue and dequeue operations, both are **O(1)** operations.(Dmitry Vyukov)
-3. Thread local pool to reduce contention on the global pool.
-3. Fast allocation and deallocation of thread_local pool, both are **O(1)** operations by pointer exchange.
+3. Thread local pool to reduce contention on the global resource.
+3. The Global Chunk Stack provides fast allocation and deallocation (recycling) to the Thread-Local Node Pool, both achieved as $O(1)$ operations via simple pointer swaps.
 4. Relieve pointer chase by allocating nodes in pages.
+5. The data field of the node is reused as the next_chunk_ pointer, implying that the two pieces of data are mutually exclusive at any given time.
 
 ## DISADVANTAGES:
 1. Can't free memory if any instance is alive, because all nodes have been disrupted and combined freely.
 2. ThreadLocalCapacity is fixed at compile time.
+3. Pointer chase can't be avoided because of list structure.
 
 ## FEATURES:
 1. Multiple producers, single consumer.
 2. All MPSC_queue instances share a global pool, but the consumer of each MPSC_queue could be different. The global pool will be freed by the last instance.
 3. Customizable ThreadLocalCapacity and Alignment.
+4. The nominal chunk is in fact a freely combined list of nodes.
 
 ## Usage
 
@@ -162,6 +165,7 @@ daking::MPSC_queue<double> queue3;
 ## Installation
 
 Just need to include `./include/MPSC_queue.hpp` in your project.
+For GCC/Clang, you need to link with the atomic library (e.g., by adding -latomic).
 
 ## LICENSE
 
