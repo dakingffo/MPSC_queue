@@ -72,24 +72,6 @@ BENCHMARK(BM_MPSC_Throughput)
     ->UseRealTime()
 	->MinWarmUpTime(2.0);
 
-/*
-Run on (16 X 3992 MHz CPU s)
-CPU Caches:
-  L1 Data 32 KiB (x8)
-  L1 Instruction 32 KiB (x8)
-  L2 Unified 1024 KiB (x8)
-  L3 Unified 16384 KiB (x1)
-----------------------------------------------------------------------------------------------------------------
-Benchmark                                                      Time             CPU   Iterations UserCounters...
-----------------------------------------------------------------------------------------------------------------
-BM_MPSC_Throughput/1/min_warmup_time:2.000/real_time   646155300 ns        0.000 ns            1 items_per_second=154.762M/s P=1, C=1
-BM_MPSC_Throughput/2/min_warmup_time:2.000/real_time  2198097700 ns        0.000 ns            1 items_per_second=45.4939M/s P=2, C=1
-BM_MPSC_Throughput/4/min_warmup_time:2.000/real_time  1622892300 ns        0.000 ns            1 items_per_second=61.6184M/s P=4, C=1
-BM_MPSC_Throughput/8/min_warmup_time:2.000/real_time  1929366300 ns        0.000 ns            1 items_per_second=51.8305M/s P=8, C=1
-BM_MPSC_Throughput/16/min_warmup_time:2.000/real_time 2108079600 ns        0.000 ns            1 items_per_second=47.4365M/s P=16, C=1
-*/
-
-
 void sequenced_producer_thread(TestQueue* q, size_t items_to_push, std::vector<std::atomic_bool>* start, int pos) {
     auto& st = *start;
     while (!st[pos].load(std::memory_order_acquire)) {
@@ -142,3 +124,41 @@ BENCHMARK(BM_4x_UnevenWave_SPSClike_Aggregation)
 ->MinWarmUpTime(2.0);
 
 BENCHMARK_MAIN();
+
+/*
+daking:
+Run on(16 X 3992 MHz CPU s)
+CPU Caches :
+L1 Data 32 KiB(x8)
+L1 Instruction 32 KiB(x8)
+L2 Unified 1024 KiB(x8)
+L3 Unified 16384 KiB(x1)
+--------------------------------------------------------------------------------------------------------------------------------
+Benchmark                                                                      Time             CPU   Iterations UserCounters...
+--------------------------------------------------------------------------------------------------------------------------------
+BM_MPSC_Throughput / 1 / min_warmup_time:2.000 / real_time                   707132400 ns        0.000 ns            1 items_per_second = 141.416M / s P = 1, C = 1
+BM_MPSC_Throughput / 2 / min_warmup_time : 2.000 / real_time                  2236937200 ns        0.000 ns            1 items_per_second = 44.704M / s P = 2, C = 1
+BM_MPSC_Throughput / 4 / min_warmup_time : 2.000 / real_time                  1741995700 ns        0.000 ns            1 items_per_second = 57.4054M / s P = 4, C = 1
+BM_MPSC_Throughput / 8 / min_warmup_time : 2.000 / real_time                  1571191000 ns        0.000 ns            1 items_per_second = 63.646M / s P = 8, C = 1
+BM_MPSC_Throughput / 16 / min_warmup_time : 2.000 / real_time                 2023721600 ns        0.000 ns            1 items_per_second = 49.4139M / s P = 16, C = 1
+BM_4x_UnevenWave_SPSClike_Aggregation / min_warmup_time : 2.000 / real_time  788367500 ns        0.000 ns            1 items_per_second = 126.844M / s P = 4, C = 1 (4x Uneven producer peak)
+
+
+moodycamel: 
+moodycamel ConcurrentQueue is a MPMC queue, so this comparion is unfair.
+Run on (16 X 3992 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x8)
+  L1 Instruction 32 KiB (x8)
+  L2 Unified 1024 KiB (x8)
+  L3 Unified 16384 KiB (x1)
+--------------------------------------------------------------------------------------------------------------------------------
+Benchmark                                                                      Time             CPU   Iterations UserCounters...
+--------------------------------------------------------------------------------------------------------------------------------
+BM_MPSC_Throughput/1/min_warmup_time:2.000/real_time                  2878925400 ns        0.000 ns            1 items_per_second=34.7352M/s P=1, C=1
+BM_MPSC_Throughput/2/min_warmup_time:2.000/real_time                  1886539900 ns        0.000 ns            1 items_per_second=53.0071M/s P=2, C=1
+BM_MPSC_Throughput/4/min_warmup_time:2.000/real_time                  1571032300 ns        0.000 ns            1 items_per_second=63.6524M/s P=4, C=1
+BM_MPSC_Throughput/8/min_warmup_time:2.000/real_time                  1686614400 ns        0.000 ns            1 items_per_second=59.2904M/s P=8, C=1
+BM_MPSC_Throughput/16/min_warmup_time:2.000/real_time                 2598044900 ns        0.000 ns            1 items_per_second=38.4905M/s P=16, C=1
+BM_4x_UnevenWave_SPSClike_Aggregation/min_warmup_time:2.000/real_time 2879179000 ns        0.000 ns            1 items_per_second=34.7321M/s P=4, C=1 (4x Uneven producer peak)
+*/

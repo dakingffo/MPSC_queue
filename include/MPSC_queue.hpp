@@ -185,7 +185,7 @@ namespace daking {
         }
 
         ~MPSC_queue() {
-            /* Waringing: If queue is not empty, the value in left nodes will not be destructed! */
+            /* Warning: If queue is not empty, the value in left nodes will not be destructed! */
             if (--global_instance_count_ == 0) {
 				std::lock_guard<std::mutex> lock(global_mutex_);
                 if (global_instance_count_ == 0) {
@@ -204,7 +204,7 @@ namespace daking {
             node* new_node = Allocate();
             new (std::addressof(new_node->value_)) value_type(std::forward<Args>(args)...);
 
-            node* old_head = head_.exchange(new_node, std::memory_order_release);
+            node* old_head = head_.exchange(new_node, std::memory_order_relaxed);
             old_head->next_.store(new_node, std::memory_order_release);
         }
 
