@@ -105,7 +105,7 @@ CPU Caches:
 1. Can't free memory if any instance is alive, because all nodes have been disrupted and combined freely.
 2. ThreadLocalCapacity is fixed at compile time.
 3. Pointer chase can't be avoided because of list structure.
-4. **When the destructor of queue is called: If queue is not empty, the value in left nodes will not be destructed!**(Because only consumer know the the tail pointer)
+4. **When the destructor of queue is called: If queue is not empty, the value in left nodes will not be destructed!**(Because only consumer know the tail pointer)
 
 ## FEATURES:
 1. Multiple producers, single consumer.
