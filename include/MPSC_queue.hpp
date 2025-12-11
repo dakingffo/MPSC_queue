@@ -59,7 +59,6 @@ namespace daking {
 
 		 The chunk is freely combined of nodes, and the nodes in a chunk are not required to be contiguous in memory.
 		 To achieve this, every node has a next_chunk_ pointer , and all of the nodes in a chunk are linked together via next_ pointer,
-
 		 In MPMC_queue instance, wo focus on the next_ pointer, which is used to link the nodes in the queue.
 		 And in chunk_stack, we focus on the next_chunk_ pointer, which is used to link the nodes in a chunk.
 
@@ -78,10 +77,10 @@ namespace daking {
                   ↓
 		 [[R][G][B][G][G][R]]     It is obvious that the nodes in a chunk are not required to be contiguous in memory.
 				  ↓               Actually, they are freely combined of nodes, 
-				 ...              There is no memory ABA problem because the global pool is just a stack of empty chunks, and We don't care about the order of nodes in the global pool,
-				  ↓               But ABA problem still exists when read next_chunk_ and compare stack top pointer, so we use tagged pointer to avoid it.
+				 ...              ABA problem exists when read next_chunk_ and compare stack top pointer, so we use tagged pointer to avoid it.
                nullptr
     */
+
     template <typename Ty, std::size_t ThreadLocalCapacity = 256,
         std::size_t Align = 64 /* std::hardware_destructive_interference_size */>
     class MPSC_queue {
@@ -113,12 +112,12 @@ namespace daking {
         struct page {
             page(node* p = nullptr, page* n = nullptr) : page_(p), next_(n) {}
             ~page() {
-                if (page_) {
-                    delete[] page_;
-                }
+                delete[] page_;
                 if (next_) {
                     delete next_;
                 }
+                page_ = nullptr;
+                next_ = nullptr;
             }
 
             node* page_;
@@ -186,7 +185,7 @@ namespace daking {
         }
 
         ~MPSC_queue() {
-            Final();
+            /* Waringing: If queue is not empty, the value in left nodes will not be destructed! */
             if (--global_instance_count_ == 0) {
 				std::lock_guard<std::mutex> lock(global_mutex_);
                 if (global_instance_count_ == 0) {
@@ -223,9 +222,7 @@ namespace daking {
                 result = std::move(next->value_);
                 next->value_.~value_type();
 
-                node* old_tail = tail_;
-                tail_ = next;
-                Deallocate(old_tail);
+                Deallocate(std::exchange(tail_, next));
                 return true;
             }
             else {
@@ -242,13 +239,6 @@ namespace daking {
             node* dummy = Allocate();
             head_.store(dummy, std::memory_order_release);
             tail_ = dummy;
-        }
-
-        void Final() {
-            while (tail_->next_) {
-                tail_ = tail_->next_;
-                tail_->value_.~value_type();
-            }
         }
 
         node* Allocate() {

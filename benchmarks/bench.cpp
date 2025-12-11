@@ -1,4 +1,5 @@
 #include "MPSC_queue.hpp" 
+// #include <moodycamel/concurrentqueue.h>
 #include <benchmark/benchmark.h>
 #include <thread>
 #include <vector>
@@ -6,7 +7,7 @@
 #include <string>
 
 constexpr size_t TOTAL_OPS = 100000000;
-//using TestQueue = moodycamel::ConcurrentQueue<int>;
+// using TestQueue = moodycamel::ConcurrentQueue<int>;
 using TestQueue = daking::MPSC_queue<int>;
 
 void producer_thread(TestQueue* q, size_t items_to_push, std::atomic_bool* start) {
@@ -70,7 +71,6 @@ BENCHMARK(BM_MPSC_Throughput)
     ->Args({ 16 })
     ->UseRealTime()
 	->MinWarmUpTime(2.0);
-BENCHMARK_MAIN();
 
 /*
 Run on (16 X 3992 MHz CPU s)
@@ -88,3 +88,57 @@ BM_MPSC_Throughput/4/min_warmup_time:2.000/real_time  1622892300 ns        0.000
 BM_MPSC_Throughput/8/min_warmup_time:2.000/real_time  1929366300 ns        0.000 ns            1 items_per_second=51.8305M/s P=8, C=1
 BM_MPSC_Throughput/16/min_warmup_time:2.000/real_time 2108079600 ns        0.000 ns            1 items_per_second=47.4365M/s P=16, C=1
 */
+
+
+void sequenced_producer_thread(TestQueue* q, size_t items_to_push, std::vector<std::atomic_bool>* start, int pos) {
+    auto& st = *start;
+    while (!st[pos].load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    for (size_t i = 0; i < items_to_push; ++i) {
+        q->enqueue(1);
+
+        if (i == items_to_push - items_to_push / 20 && st[(pos + 1) % st.size()].load(std::memory_order_acquire) == false) {
+            st[(pos + 1) % st.size()].store(true, std::memory_order_release);
+        }
+    }
+}
+
+static void BM_4x_UnevenWave_SPSClike_Aggregation(benchmark::State& state) {
+    const int num_producers = 4;
+    const size_t items_per_producer = TOTAL_OPS / num_producers;
+
+    TestQueue q;
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        std::vector<std::thread> producers;
+        producers.reserve(num_producers);
+        std::vector<std::atomic_bool> start(num_producers + 1);
+        std::thread consumer(consumer_thread, &q, TOTAL_OPS, &start[num_producers]);
+        for (int i = 0; i < num_producers; ++i) {
+            producers.emplace_back(sequenced_producer_thread, &q, items_per_producer, &start, i);
+        }
+        state.ResumeTiming();
+        start[0].store(true, std::memory_order_release);
+        start[num_producers].store(std::memory_order_release);
+        if (consumer.joinable()) {
+            consumer.join();
+        }
+        state.PauseTiming();
+        for (auto& p : producers) {
+            p.join();
+        }
+        state.ResumeTiming();
+    }
+
+    state.SetItemsProcessed(TOTAL_OPS * state.iterations());
+    state.SetLabel("P=4, C=1 (4x Uneven producer peak)");
+}
+
+// 附加新的基准测试调用
+BENCHMARK(BM_4x_UnevenWave_SPSClike_Aggregation)
+->UseRealTime()
+->MinWarmUpTime(2.0);
+
+BENCHMARK_MAIN();
