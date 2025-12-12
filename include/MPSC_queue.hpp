@@ -32,7 +32,6 @@ SOFTWARE.
 #include <utility>
 #include <atomic>
 #include <mutex>
-#include <iostream>
 #include <vector>
 
 namespace daking {
@@ -113,11 +112,7 @@ namespace daking {
             page(node* p = nullptr, page* n = nullptr) : page_(p), next_(n) {}
             ~page() {
                 delete[] page_;
-                if (next_) {
-                    delete next_;
-                }
-                page_ = nullptr;
-                next_ = nullptr;
+                delete next_;
             }
 
             node* page_;
@@ -137,12 +132,20 @@ namespace daking {
                 top.store(tagged_ptr{ nullptr, 0 });
 			}
 
-            void push(node* chunk) noexcept {
+#if defined(__has_feature) 
+    #if __has_feature(thread_sanitizer)
+            __attribute__((no_sanitize("thread")))
+    #endif
+#endif
+            void push(node* chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr new_top{ chunk, 0 };
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
-
+                // If TB read old_top, and TA pop the old_top then
                 do {
                     new_top.node_->next_chunk_ = old_top.node_;
+                    // then B will read a invalid value(which is regard as object address at TA)
+                    // but B will not pass CAS.
+                    // Actually, this is a data race, but CAS protect B form UB. 
 					new_top.tag_ = old_top.tag_ + 1;
                 } while (!top.compare_exchange_weak(
                     old_top, new_top,    
@@ -151,7 +154,12 @@ namespace daking {
                 ));
             }
 
-            bool try_pop(node*& chunk) noexcept {
+#if defined(__has_feature) 
+    #if __has_feature(thread_sanitizer)
+            __attribute__((no_sanitize("thread")))
+    #endif
+#endif
+            bool try_pop(node*& chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
                 tagged_ptr new_top;
 
@@ -161,6 +169,10 @@ namespace daking {
                     }
                     new_top.node_ = old_top.node_->next_chunk_;
 					new_top.tag_ = old_top.tag_ + 1;
+                    // If TA and TB reach here at the same time
+                    // And A pop the chunk successfully, then it will construct object at old_top.node_->next_chunk_, 
+                    // so that B will read a invaild value, but this value will not pass the next CAS.(old_top have been updated by A)
+                    // Actually, this is a data race, but CAS protect B form UB. 
                 } while (!top.compare_exchange_weak(
                     old_top, new_top,   
                     std::memory_order_acq_rel,
@@ -179,7 +191,10 @@ namespace daking {
             global_instance_count_++;
             {   
                 std::lock_guard<std::mutex> lock(global_mutex_);
-                global_thread_local_manager_.push_back({ &thread_local_node_list_, &thread_local_node_count_ });
+                if (!global_thread_local_manager_) {
+                    global_thread_local_manager_ = new std::vector<std::pair<node**, size_type*>>();
+                }
+                global_thread_local_manager_->emplace_back(&thread_local_node_list_, &thread_local_node_count_);
             }
             Initial();
         }
@@ -187,7 +202,9 @@ namespace daking {
         ~MPSC_queue() {
             /* Warning: If queue is not empty, the value in left nodes will not be destructed! */
             if (--global_instance_count_ == 0) {
+                // only the last instance free the global resource
 				std::lock_guard<std::mutex> lock(global_mutex_);
+                // if a new instance constructed before i get mutex, I do nothing.
                 if (global_instance_count_ == 0) {
                     Free_global();
                 }
@@ -265,48 +282,57 @@ namespace daking {
         void Reserve_global() {
 			std::lock_guard<std::mutex> lock(global_mutex_);
             if (global_chunk_stack.top.load(std::memory_order_acquire).node_) {
+                // if anyone have already allocate chunks, I return.
                 return;
 			}
             size_type count = std::max(thread_local_capacity, global_node_count_);
             node* new_nodes = new node[count];
-            global_page_list_.next_ = new page(new_nodes, global_page_list_.next_);
+            global_page_list_ = new page(new_nodes, global_page_list_);
 
-            for (size_type i = 0; i < count - 1; i++) {
+            for (size_type i = 0; i < count; i++) {
                 new_nodes[i].next_ = new_nodes + i + 1;
                 if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {
+                    // chunk_count = count / ThreadLocalCapacity
                     new_nodes[i].next_ = nullptr;
+                    std::atomic_thread_fence(std::memory_order_acq_rel);
+                    // mutex don't protect global_chunk_stack, so we need make a atomice fence
                     global_chunk_stack.push(&new_nodes[i - thread_local_capacity + 1]);
 				}
             }
+
             global_node_count_ += count;
         }
 
         void Free_global() {
             /* Already locked */
-            delete global_page_list_.next_;
-            global_page_list_.next_ = nullptr;
+            delete std::exchange(global_page_list_, nullptr);
 
-            for (auto [ptr, size] : global_thread_local_manager_) {
+            // Now all thread_local variables are invalid.
+            for (auto [ptr, size] : *global_thread_local_manager_) {
                 *ptr = nullptr;
                 *size = 0;
             }
-            global_thread_local_manager_.clear();
+            delete std::exchange(global_thread_local_manager_, nullptr);
 
             global_node_count_ = 0;
             global_chunk_stack.reset();
         }
 
-        static chunk_stack                                global_chunk_stack;
-        static std::atomic_size_t                         global_instance_count_;
+        /* Global LockFree*/
+        static chunk_stack                                 global_chunk_stack;
+        static std::atomic_size_t                          global_instance_count_;
 
-        static std::mutex                                 global_mutex_;
-        static size_type                                  global_node_count_;
-        static page                                       global_page_list_;
-        static std::vector<std::pair<node**, size_type*>> global_thread_local_manager_;
+        /* Global Mutex*/ 
+        static std::mutex                                  global_mutex_;
+        static size_type                                   global_node_count_;
+        static page*                                       global_page_list_;
+        static std::vector<std::pair<node**, size_type*>>* global_thread_local_manager_;
 
+        /* ThreadLocal*/
         thread_local static node*         thread_local_node_list_;
         thread_local static size_type     thread_local_node_count_;
 
+        /* MPSC */
         alignas(align) std::atomic<node*> head_;
         alignas(align) node*              tail_;
     };
@@ -329,14 +355,14 @@ namespace daking {
     std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_mutex_{};
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    std::vector<std::pair<typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node**, std::size_t*>>
+    std::vector<std::pair<typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node**, std::size_t*>>*
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_thread_local_manager_{};
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_node_count_ = 0;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::page 
+    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::page*
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_page_list_;
 }
 

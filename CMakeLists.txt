@@ -43,29 +43,29 @@ target_link_libraries(mpsc_bench
 target_compile_options(mpsc_bench ${COMMON_TARGET_PROPERTIES})
 
 # 日志系统示例
-add_executable(mpsc_log_example "examples/log_system.cpp")
-target_include_directories(mpsc_log_example 
+add_executable(mpsc_log_system_example "examples/log_system.cpp")
+target_include_directories(mpsc_log_system_example 
     PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
-target_link_libraries(mpsc_log_example 
+target_link_libraries(mpsc_log_system_example 
     PRIVATE
         Threads::Threads
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:atomic>
 )
-target_compile_options(mpsc_log_example ${COMMON_TARGET_PROPERTIES})
+target_compile_options(mpsc_log_system_example ${COMMON_TARGET_PROPERTIES})
 
 # 命令分发器示例
-add_executable(mpsc_command_dispatcher examples/command_dispatcher.cpp)
-target_include_directories(mpsc_command_dispatcher 
+add_executable(mpsc_command_dispatcher_example examples/command_dispatcher.cpp)
+target_include_directories(mpsc_command_dispatcher_example
     PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
-target_link_libraries(mpsc_command_dispatcher 
+target_link_libraries(mpsc_command_dispatcher_example
     PRIVATE
         Threads::Threads
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:atomic>
 )
-target_compile_options(mpsc_command_dispatcher ${COMMON_TARGET_PROPERTIES})
+target_compile_options(mpsc_command_dispatcher_example ${COMMON_TARGET_PROPERTIES})

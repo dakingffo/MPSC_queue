@@ -8,6 +8,7 @@
 #include <cstring>
 #include <atomic>
 #include <algorithm>
+#include <ctime> 
 
 using namespace daking;
 
@@ -34,7 +35,14 @@ struct LogEntry {
 
         auto now = std::chrono::system_clock::now();
         std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-        std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now_c));
+        
+        std::tm local_tm{};
+        if (localtime_r(&now_c, &local_tm)) {
+            std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_tm);
+        } else {
+            std::strncpy(timestamp, "YYYY-MM-DD HH:MM:SS", sizeof(timestamp));
+            timestamp[sizeof(timestamp) - 1] = '\0';
+        }
     }
 
     LogEntry(LogEntry&& other) noexcept = default;
@@ -97,6 +105,7 @@ void worker_producer_task(int worker_id, int messages_to_send) {
 }
 
 int main() {
+    tzset();
     constexpr int NUM_WORKERS = 4;
     constexpr int MSGS_PER_WORKER = 50000;
 

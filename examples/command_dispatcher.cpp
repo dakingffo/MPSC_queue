@@ -62,6 +62,11 @@ void command_dispatcher_thread() {
         }
     }
 
+    while (!g_command_queue.empty_approx()) {
+        Command cmd;
+        g_command_queue.try_dequeue(cmd);
+    }
+
     std::cout << "Dispatcher: Command thread shut down." << std::endl;
 }
 
