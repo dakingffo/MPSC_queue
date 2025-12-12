@@ -98,7 +98,7 @@ namespace daking {
 
     private:
         struct node {
-            node() : next_chunk_(nullptr), next_(nullptr) {}
+            node() : next_chunk_(nullptr) {}
             ~node() = default;
 
             union {
@@ -255,7 +255,7 @@ namespace daking {
 		}
 
         static size_type global_node_size_apprx() noexcept {
-            return global_node_size_apprx.load(std::memory_order_acquire);
+            return global_node_count_.load(std::memory_order_acquire);
         }
 
         static size_type reserve_global_chunk(size_type chunk_count){
@@ -296,7 +296,7 @@ namespace daking {
             if (global_count / thread_local_capacity >= chunk_count) {
                 return;
             }
-            size_type count = (chunk_count - global_node_count / thread_local_capacity) * thread_local_capacity;
+            size_type count = (chunk_count - global_node_count_ / thread_local_capacity) * thread_local_capacity;
             node* new_nodes = new node[count];
             global_page_list_ = new page(new_nodes, global_page_list_);
 
@@ -324,7 +324,6 @@ namespace daking {
             size_type count = std::max(thread_local_capacity, global_count);
             node* new_nodes = new node[count];
             global_page_list_ = new page(new_nodes, global_page_list_);
-
             for (size_type i = 0; i < count; i++) {
                 new_nodes[i].next_ = new_nodes + i + 1;
                 if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {

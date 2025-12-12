@@ -64,7 +64,6 @@ static void BM_MPSC_Throughput(benchmark::State& state) {
 }
 
 BENCHMARK(BM_MPSC_Throughput)
-    ->Iterations(3)
     ->Args({ 1 })
     ->Args({ 2 })
     ->Args({ 4 })
@@ -122,7 +121,6 @@ static void BM_4x_UnevenWave_SPSClike_Aggregation(benchmark::State& state) {
 
 // 附加新的基准测试调用
 BENCHMARK(BM_4x_UnevenWave_SPSClike_Aggregation)
-    ->Iterations(3)
     ->Args({ 2 })
     ->Args({ 5 })
     ->Args({ 10 })
