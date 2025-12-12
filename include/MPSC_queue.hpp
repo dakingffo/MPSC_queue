@@ -198,6 +198,9 @@ namespace daking {
             }
             Initial();
         }
+        MPSC_queue(size_type initial_global_chunk_count) : MPSC_queue() {
+            reserve_global_chunk(initial_global_chunk_count);
+        }
 
         ~MPSC_queue() {
             /* Warning: If queue is not empty, the value in left nodes will not be destructed! */
@@ -247,9 +250,17 @@ namespace daking {
             }
         }
 
-        bool empty_approx() const noexcept {
+        bool empty() const noexcept {
             return tail_->next_.load(std::memory_order_acquire) == nullptr;
 		}
+
+        static size_type global_node_size_apprx() noexcept {
+            return global_node_size_apprx.load(std::memory_order_acquire);
+        }
+
+        static size_type reserve_global_chunk(size_type chunk_count){
+            Reserve_global_external(chunk_count);
+        }
 
     private:
         void Initial() {
@@ -261,7 +272,7 @@ namespace daking {
         node* Allocate() {
             if (!thread_local_node_list_) [[unlikely]] {
                 while (!global_chunk_stack.try_pop(thread_local_node_list_)) {
-					Reserve_global();
+                    Reserve_global_internal();
 				}
             }
             node* res = std::exchange(thread_local_node_list_, thread_local_node_list_->next_);
@@ -279,13 +290,38 @@ namespace daking {
             }
         }
 
-        void Reserve_global() {
+        static void Reserve_global_external(size_type chunk_count) {
+            std::lock_guard<std::mutex> lock(global_mutex_);
+            size_type global_count = global_node_count_.load(std::memory_order_relaxed);
+            if (global_count / thread_local_capacity >= chunk_count) {
+                return;
+            }
+            size_type count = (chunk_count - global_node_count / thread_local_capacity) * thread_local_capacity;
+            node* new_nodes = new node[count];
+            global_page_list_ = new page(new_nodes, global_page_list_);
+
+            for (size_type i = 0; i < count; i++) {
+                new_nodes[i].next_ = new_nodes + i + 1;
+                if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {
+                    // chunk_count = count / ThreadLocalCapacity
+                    new_nodes[i].next_ = nullptr;
+                    std::atomic_thread_fence(std::memory_order_acq_rel);
+                    // mutex don't protect global_chunk_stack, so we need make a atomice fence
+                    global_chunk_stack.push(&new_nodes[i - thread_local_capacity + 1]);
+                }
+            }
+
+            global_node_count_.store(global_count + count, std::memory_order_release);
+        }
+
+        static void Reserve_global_internal() {
 			std::lock_guard<std::mutex> lock(global_mutex_);
             if (global_chunk_stack.top.load(std::memory_order_acquire).node_) {
                 // if anyone have already allocate chunks, I return.
                 return;
 			}
-            size_type count = std::max(thread_local_capacity, global_node_count_);
+            size_type global_count = global_node_count_.load(std::memory_order_relaxed);
+            size_type count = std::max(thread_local_capacity, global_count);
             node* new_nodes = new node[count];
             global_page_list_ = new page(new_nodes, global_page_list_);
 
@@ -300,10 +336,10 @@ namespace daking {
 				}
             }
 
-            global_node_count_ += count;
+            global_node_count_.store(global_count + count, std::memory_order_release);
         }
 
-        void Free_global() {
+        static void Free_global() {
             /* Already locked */
             delete std::exchange(global_page_list_, nullptr);
 
@@ -314,7 +350,7 @@ namespace daking {
             }
             delete std::exchange(global_thread_local_manager_, nullptr);
 
-            global_node_count_ = 0;
+            global_node_count_.store(0, std::memory_order_release);
             global_chunk_stack.reset();
         }
 
@@ -324,7 +360,7 @@ namespace daking {
 
         /* Global Mutex*/ 
         static std::mutex                                  global_mutex_;
-        static size_type                                   global_node_count_;
+        static std::atomic_size_t                          global_node_count_;
         static page*                                       global_page_list_;
         static std::vector<std::pair<node**, size_type*>>* global_thread_local_manager_;
 
@@ -359,7 +395,7 @@ namespace daking {
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_thread_local_manager_{};
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_node_count_ = 0;
+    std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_node_count_ = 0;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::page*

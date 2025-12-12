@@ -62,7 +62,7 @@ void command_dispatcher_thread() {
         }
     }
 
-    while (!g_command_queue.empty_approx()) {
+    while (!g_command_queue.empty()) {
         Command cmd;
         g_command_queue.try_dequeue(cmd);
     }

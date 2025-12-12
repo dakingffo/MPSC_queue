@@ -63,7 +63,7 @@ void log_consumer_thread(const std::string& filename) {
 
     std::cout << "Consumer: Log file opened at " << filename << std::endl;
 
-    while (g_running.load(std::memory_order_acquire) || !g_log_queue.empty_approx()) {
+    while (g_running.load(std::memory_order_acquire) || !g_log_queue.empty()) {
 
         if (g_log_queue.try_dequeue(entry)) {
 
