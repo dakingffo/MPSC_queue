@@ -98,7 +98,9 @@ namespace daking {
 
     private:
         struct node {
-            node() : next_chunk_(nullptr) {}
+            node() : next_chunk_(nullptr) {
+                next_.store(nullptr, std::memory_order_release);
+            }
             ~node() = default;
 
             union {
@@ -178,7 +180,6 @@ namespace daking {
                     std::memory_order_acq_rel,
                     std::memory_order_relaxed
                 ));
-
 				chunk = old_top.node_;
                 return true;
             }
@@ -224,7 +225,7 @@ namespace daking {
             node* new_node = Allocate();
             new (std::addressof(new_node->value_)) value_type(std::forward<Args>(args)...);
 
-            node* old_head = head_.exchange(new_node, std::memory_order_relaxed);
+            node* old_head = head_.exchange(new_node, std::memory_order_acq_rel);
             old_head->next_.store(new_node, std::memory_order_release);
         }
 
@@ -304,9 +305,8 @@ namespace daking {
                 new_nodes[i].next_ = new_nodes + i + 1;
                 if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {
                     // chunk_count = count / ThreadLocalCapacity
-                    new_nodes[i].next_ = nullptr;
-                    std::atomic_thread_fence(std::memory_order_acq_rel);
-                    // mutex don't protect global_chunk_stack, so we need make a atomice fence
+                    new_nodes[i].next_ .store(nullptr, std::memory_order_release);
+                    // mutex don't protect global_chunk_stack, so we need release
                     global_chunk_stack.push(&new_nodes[i - thread_local_capacity + 1]);
                 }
             }
