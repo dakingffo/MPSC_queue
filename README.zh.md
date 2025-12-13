@@ -108,8 +108,8 @@ CPU Caches:
 | :--- | :--- | :--- | :--- | :--- |
 | **SPSC 基线** | 1 | 1 | **150.146** | 理论单线程写入极限 |
 | 稳定 MPSC | 2 | 1 | 46.9628 | 生产者竞争导致性能损耗 |
-| 稳定 MPSC | 4 | 1 | 47.246 | 均匀写入的峰值性能 |
-| 稳定 MPSC | 8 | 1 | 44.686 | |
+| 稳定 MPSC | 4 | 1 | 58.246 | 均匀写入的峰值性能 |
+| 稳定 MPSC | 8 | 1 | 49.686 | |
 | 稳定 MPSC | 16 | 1 | 43.1969 | 趋于稳定 |
 
 ### **第二部分：不均匀顺序爆发（Uneven Wave Aggregation）**
@@ -181,13 +181,23 @@ while !(queue.try_dequeue(get)) {
     }
 }
 ```
-**警告：如果队列被析构时队内还有节点，那这些节点存储的对象的析构函数无法被调用！**
-### 可定制 ThreadLocalCapacity 和 Alignment
+如果使用C++20或更高版本，则提供一个`dequeue`方法进行阻塞等待，但会导致负载状态为SPSClike时的性能下降。
+
+**警告：如果队列被析构时队内还有节点，那么这些节点存储的对象的析构函数无法被调用！**
+### 可定制模版参数和内存操作
 
 ```c++
 daking::MPSC_queue<int, 1024, 128> queue;
 // ThreadLocalCapacity = 1024 (线程本地容量)
 // Internal head/tail Alignment = 128 (内部头尾对齐方式)
+
+daking::MPSC_queue<int, 512>::reserve_global_chunk(5);
+// 向全局池分配五个块，也就是5 * 512个节点，如果如果参数小于全局池已有的节点数，则不会分配。
+std::cout << daking::MPSC_queue<int, 512>::global_node_size_apprx();
+// 查看全局节点（chunk数 * ThreadLocalCapacity）的大概数目。
+
+daking::MPSC_queue<int, 1024, 128> queue(5);
+// 在构造之初调用daking::MPSC_queue<int, 512>::reserve_global_chunk(5);
 ```
 
 ### 共享线程本地池和全局池
@@ -218,7 +228,7 @@ daking::MPSC_queue<double> queue3;
 
 ## 安装 (Installation)
 
-只需在您的项目中包含 `./include/MPSC_queue.hpp` 文件即可。
+只需在您的项目中包含 `./include/MPSC_queue.hpp` 文件即可（需要C++17或更高版本）。
 对于GCC/Clang，您需要额外链接atomic库。
 也提供CMake复现BENCHMARK测试以及构建example用例。
 

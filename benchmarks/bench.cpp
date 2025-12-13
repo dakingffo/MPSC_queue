@@ -104,7 +104,7 @@ static void BM_4x_UnevenWave_SPSClike_Aggregation(benchmark::State& state) {
         }
         state.ResumeTiming();
         start[0].store(true, std::memory_order_release);
-        start[num_producers].store(std::memory_order_release);
+        start[num_producers].store(true, std::memory_order_release);
         if (consumer.joinable()) {
             consumer.join();
         }
@@ -143,8 +143,8 @@ Benchmark                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------
 BM_MPSC_Throughput/1/min_warmup_time:2.000/iterations:3/real_time                      666017800 ns        0.000 ns            3 items_per_second=150.146M/s P=1, C=1
 BM_MPSC_Throughput/2/min_warmup_time:2.000/iterations:3/real_time                     2129343400 ns        0.000 ns            3 items_per_second=46.9628M/s P=2, C=1
-BM_MPSC_Throughput/4/min_warmup_time:2.000/iterations:3/real_time                     2116579700 ns        0.000 ns            3 items_per_second=47.246M/s P=4, C=1
-BM_MPSC_Throughput/8/min_warmup_time:2.000/iterations:3/real_time                     2237837467 ns        0.000 ns            3 items_per_second=44.686M/s P=8, C=1
+BM_MPSC_Throughput/4/min_warmup_time:2.000/iterations:3/real_time                     2116579700 ns        0.000 ns            3 items_per_second=58.246M/s P=4, C=1
+BM_MPSC_Throughput/8/min_warmup_time:2.000/iterations:3/real_time                     2237837467 ns        0.000 ns            3 items_per_second=49.686M/s P=8, C=1
 BM_MPSC_Throughput/16/min_warmup_time:2.000/iterations:3/real_time                    2314983567 ns        0.000 ns            3 items_per_second=43.1969M/s P=16, C=1
 BM_4x_UnevenWave_SPSClike_Aggregation/2/min_warmup_time:2.000/iterations:3/real_time  1667029300 ns        0.000 ns            3 items_per_second=59.9869M/s P=4, C=1 (4x Uneven producer peak relay at 0.500000)
 BM_4x_UnevenWave_SPSClike_Aggregation/5/min_warmup_time:2.000/iterations:3/real_time  1309859867 ns        0.000 ns            3 items_per_second=76.344M/s P=4, C=1 (4x Uneven producer peak relay at 0.800000)

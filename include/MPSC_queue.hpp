@@ -29,10 +29,28 @@ SOFTWARE.
 #ifndef DAKING_MPSC_QUEUE_HPP
 #define DAKING_MPSC_QUEUE_HPP
 
+#ifndef DAKING_NO_TSAN
+#define DAKING_NO_TSAN
+    #if defined(__has_feature) 
+        #if __has_feature(thread_sanitizer)
+            __attribute__((no_sanitize("thread")))
+        #endif
+    #endif
+#endif // !DAKING_NO_TSAN
+
+#ifndef DAKING_HAS_CXX20_OR_ABOVE
+    #if defined(_MSC_VER) 
+        #define DAKING_HAS_CXX20_OR_ABOVE _MSVC_LANG >= 202002L
+    #else 
+    #define DAKING_HAS_CXX20_OR_ABOVE __cplusplus >= 202002L
+    #endif
+#endif 
+
 #include <utility>
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <chrono>
 
 namespace daking {
     /*
@@ -134,11 +152,7 @@ namespace daking {
                 top.store(tagged_ptr{ nullptr, 0 });
 			}
 
-#if defined(__has_feature) 
-    #if __has_feature(thread_sanitizer)
-            __attribute__((no_sanitize("thread")))
-    #endif
-#endif
+            DAKING_NO_TSAN
             void push(node* chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr new_top{ chunk, 0 };
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
@@ -156,11 +170,7 @@ namespace daking {
                 ));
             }
 
-#if defined(__has_feature) 
-    #if __has_feature(thread_sanitizer)
-            __attribute__((no_sanitize("thread")))
-    #endif
-#endif
+            DAKING_NO_TSAN
             bool try_pop(node*& chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
                 tagged_ptr new_top;
@@ -226,7 +236,15 @@ namespace daking {
             new (std::addressof(new_node->value_)) value_type(std::forward<Args>(args)...);
 
             node* old_head = head_.exchange(new_node, std::memory_order_acq_rel);
+#if DAKING_HAS_CXX20_OR_ABOVE
+            node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
+#endif 
             old_head->next_.store(new_node, std::memory_order_release);
+#if DAKING_HAS_CXX20_OR_ABOVE
+            if (old_head_next == nullptr) [[unlikely]] {
+                old_head->next_.notify_one();
+            }
+#endif 
         }
 
         void enqueue(const_reference value) {
@@ -250,6 +268,17 @@ namespace daking {
                 return false;
             }
         }
+
+#if DAKING_HAS_CXX20_OR_ABOVE
+        void dequeue(value_type& result) noexcept {
+            while (true) {
+                if (try_dequeue(result)) {
+                    return;
+                }
+                tail_->next_.wait(nullptr, std::memory_order_acquire);
+            }
+        }
+#endif 
 
         bool empty() const noexcept {
             return tail_->next_.load(std::memory_order_acquire) == nullptr;
@@ -373,18 +402,18 @@ namespace daking {
     };
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node* 
+    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node*
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_list_ = nullptr;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     thread_local std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_count_ = 0;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::chunk_stack 
+    alignas(Align) typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::chunk_stack
         MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_chunk_stack{};
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_instance_count_ = 0;
+    alignas(Align) std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_instance_count_ = 0;
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_mutex_{};

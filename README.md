@@ -107,8 +107,8 @@ This scenario tests the throughput capacity when multiple producers continuously
 | :--- | :--- | :--- | :--- | :--- |
 | **SPSC Baseline** | 1 | 1 | **150.146** | Theoretical single-threaded write limit |
 | Stable MPSC | 2 | 1 | 46.9628 | Performance degradation due to producer contention |
-| Stable MPSC | 4 | 1 | 47.246 | Peak performance for uniform writes |
-| Stable MPSC | 8 | 1 | 44.686 | |
+| Stable MPSC | 4 | 1 | 58.246 | Peak performance for uniform writes |
+| Stable MPSC | 8 | 1 | 49.686 | |
 | Stable MPSC | 16 | 1 | 43.1969 | Tends to stabilize |
 
 ### **Part Two: Non-Uniform Sequential Burst (Uneven Wave Aggregation)**
@@ -168,28 +168,43 @@ queue.enqueue(1);
 
 // Consumer
 int get;
-while !(queue.try_dequeue(get)) {
-    // Handle waiting...
+while (!(queue.try_dequeue(get))) {
+    // Handling wait...
     if (queue.empty()) {
-        // The queue size cannot be tracked precisely; if you absolutely require it, you can track it externally using an atomic variable.
+        // The queue size cannot be precisely tracked. If you absolutely need it, 
+        // you can use an external atomic variable for tracking.
         break;
     }
 }
 ```
-**WARNING: If the queue is destructed while nodes remain inside, the destructors of the objects stored in those nodes will not be called\!**
 
-### Customizable ThreadLocalCapacity and Alignment
+If using C++20 or later, a `dequeue` method is available for **blocking wait**, but using it will lead to a performance degradation resembling SPSClike performance.
+
+**Warning: If the queue is destructed while there are still nodes inside, the destructors for the objects stored in those nodes cannot be called\!**
+
+### Customizable Template Parameters and Memory Operations
 
 ```c++
 daking::MPSC_queue<int, 1024, 128> queue;
-// ThreadLocalCapacity = 1024 (thread-local capacity)
-// Inner head/tail Alignment = 128 (Inner head/tail Alignment)
+// ThreadLocalCapacity = 1024 (Capacity of the thread-local node pool)
+// Internal head/tail Alignment = 128 (Alignment for the internal head/tail pointers)
+
+daking::MPSC_queue<int, 512>::reserve_global_chunk(5);
+// Allocates five chunks into the global pool, which amounts to 5 * 512 nodes. 
+// No allocation will occur if the parameter is less than the number of chunks already in the global pool.
+
+std::cout << daking::MPSC_queue<int, 512>::global_node_size_apprx();
+// Retrieves the approximate total number of global nodes (number of chunks * ThreadLocalCapacity).
+
+daking::MPSC_queue<int, 1024, 128> queue(5);
+// Calls daking::MPSC_queue<int, 512>::reserve_global_chunk(5) upon construction.
 ```
 
-### Sharing Thread-Local and Global Pools
+### Shared Thread-Local and Global Pools
 
 ```c++
-// All instances with the same template parameters share the same thread-local and global pool.
+// All instances with the same template parameters share the same thread-local pool and global pool.
+// 
 
 daking::MPSC_queue<int> queue1;
 daking::MPSC_queue<int> queue2;
@@ -197,7 +212,7 @@ daking::MPSC_queue<int> queue2;
 // Thread X: Producer for queue1 and queue2
 queue1.enqueue(1);
 queue2.enqueue(1);
-// These two nodes come from the same thread-local pool of Thread X.
+// These two nodes will be allocated from Thread X's single thread-local pool.
 
 // Thread A: Consumer for queue1
 int a;
@@ -205,16 +220,16 @@ queue1.try_dequeue(a);
 // Thread B: Consumer for queue2
 int b;
 queue2.try_dequeue(b);
-// They will push memory blocks back to the same global pool.
+// They will push memory chunks back into the same global pool.
 
 daking::MPSC_queue<double> queue3;
-// queue3 does not share resources with queue1 and queue2.
+// queue3 does NOT share resources with queue1 and queue2 because the template parameter (Ty) is different.
 ```
 
 
 ## Installation
 
-Simply include the `./include/MPSC_queue.hpp` file in your project.
+Simply include the `./include/MPSC_queue.hpp` file in your project(requires C++17 or above).
 For GCC/Clang, you need to link the atomic library separately.
 CMake is also provided to reproduce the BENCHMARK tests and build example use cases.
 
