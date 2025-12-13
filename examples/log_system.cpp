@@ -8,7 +8,8 @@
 #include <cstring>
 #include <atomic>
 #include <algorithm>
-#include <ctime> 
+#include <ctime>
+#include <cstdio> // For std::sprintf
 
 using namespace daking;
 
@@ -34,13 +35,26 @@ struct LogEntry {
         message[sizeof(message) - 1] = '\0';
 
         auto now = std::chrono::system_clock::now();
+
+        auto ms_part = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count() % 1000;
+
         std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-        
-        std::tm local_tm{};
-        if (localtime_r(&now_c, &local_tm)) {
-            std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_tm);
-        } else {
-            std::strncpy(timestamp, "YYYY-MM-DD HH:MM:SS", sizeof(timestamp));
+        std::tm* local_tm_ptr = std::localtime(&now_c); // Note: std::localtime is not thread-safe
+
+        if (local_tm_ptr) {
+            size_t len = std::strftime(timestamp, sizeof(timestamp) - 5, "%Y-%m-%d %H:%M:%S", local_tm_ptr);
+
+            if (len > 0 && len < sizeof(timestamp) - 5) {
+                std::sprintf(timestamp + len, ".%03lld", (long long)ms_part);
+            }
+            else {
+                std::strncpy(timestamp, "YYYY-MM-DD HH:MM:SS.mmm", sizeof(timestamp));
+                timestamp[sizeof(timestamp) - 1] = '\0';
+            }
+        }
+        else {
+            std::strncpy(timestamp, "YYYY-MM-DD HH:MM:SS.mmm", sizeof(timestamp));
             timestamp[sizeof(timestamp) - 1] = '\0';
         }
     }
@@ -105,7 +119,6 @@ void worker_producer_task(int worker_id, int messages_to_send) {
 }
 
 int main() {
-    tzset();
     constexpr int NUM_WORKERS = 4;
     constexpr int MSGS_PER_WORKER = 50000;
 

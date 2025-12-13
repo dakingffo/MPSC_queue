@@ -119,7 +119,6 @@ static void BM_4x_UnevenWave_SPSClike_Aggregation(benchmark::State& state) {
     state.SetLabel("P=4, C=1 (4x Uneven producer peak relay at " + std::to_string(1 - 1.0 / den) + ")");
 }
 
-// 附加新的基准测试调用
 BENCHMARK(BM_4x_UnevenWave_SPSClike_Aggregation)
     ->Args({ 2 })
     ->Args({ 5 })
