@@ -9,7 +9,8 @@
 #include <atomic>
 #include <algorithm>
 #include <ctime>
-#include <cstdio> // For std::sprintf
+#include <cstdio>
+#include <cstdlib>
 
 using namespace daking;
 
@@ -17,6 +18,21 @@ enum class LogLevel { INFO, WARN, ERROR };
 
 constexpr int TIMESTAMP_SIZE = 32;
 constexpr int MESSAGE_SIZE = 256;
+
+inline bool get_local_tm(const std::time_t* time_ptr, std::tm* result) {
+#ifdef _MSC_VER
+    return _localtime64_s(result, time_ptr) == 0;
+#elif defined(__GNUC__) || defined(__clang__) || defined(__APPLE__)
+    return localtime_r(time_ptr, result) != nullptr;
+#else
+    std::tm* tm_ptr = std::localtime(time_ptr);
+    if (tm_ptr) {
+        *result = *tm_ptr;
+        return true;
+    }
+    return false;
+#endif
+}
 
 struct LogEntry {
     LogLevel level;
@@ -40,21 +56,13 @@ struct LogEntry {
             now.time_since_epoch()).count() % 1000;
 
         std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-        std::tm* local_tm_ptr = std::localtime(&now_c); // Note: std::localtime is not thread-safe
 
-        if (local_tm_ptr) {
-            size_t len = std::strftime(timestamp, sizeof(timestamp) - 5, "%Y-%m-%d %H:%M:%S", local_tm_ptr);
-
-            if (len > 0 && len < sizeof(timestamp) - 5) {
-                std::sprintf(timestamp + len, ".%03lld", (long long)ms_part);
-            }
-            else {
-                std::strncpy(timestamp, "YYYY-MM-DD HH:MM:SS.mmm", sizeof(timestamp));
-                timestamp[sizeof(timestamp) - 1] = '\0';
-            }
+        std::tm local_tm{};
+        if (get_local_tm(&now_c, &local_tm)) {
+            std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_tm);
         }
         else {
-            std::strncpy(timestamp, "YYYY-MM-DD HH:MM:SS.mmm", sizeof(timestamp));
+            std::strncpy(timestamp, "YYYY-MM-DD HH:MM:SS", sizeof(timestamp));
             timestamp[sizeof(timestamp) - 1] = '\0';
         }
     }
