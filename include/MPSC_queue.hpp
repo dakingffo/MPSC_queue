@@ -30,12 +30,12 @@ SOFTWARE.
 #define DAKING_MPSC_QUEUE_HPP
 
 #ifndef DAKING_NO_TSAN
-#define DAKING_NO_TSAN
-    #if defined(__has_feature) 
-        #if __has_feature(thread_sanitizer)
+#   define DAKING_NO_TSAN
+#   if defined(__has_feature) 
+#       if __has_feature(thread_sanitizer)
             __attribute__((no_sanitize("thread")))
-        #endif
-    #endif
+#       endif
+#   endif
 #endif // !DAKING_NO_TSAN
 
 #ifndef DAKING_HAS_CXX20_OR_ABOVE
@@ -44,7 +44,15 @@ SOFTWARE.
     #else 
     #define DAKING_HAS_CXX20_OR_ABOVE __cplusplus >= 202002L
     #endif
-#endif 
+#endif // !DAKING_HAS_CXX20_OR_ABOVE
+
+#ifndef DAKING_ALWAYS_INLINE
+#   if defined(_MSC_VER)
+#       define DAKING_ALWAYS_INLINE [[msvc::forceinline]]
+#   else
+#       define DAKING_ALWAYS_INLINE [[gnu::always_inline]] 
+#   endif
+#endif // !DAKING_ALWAYS_INLINE
 
 #include <utility>
 #include <atomic>
@@ -148,11 +156,11 @@ namespace daking {
             chunk_stack()  = default;
             ~chunk_stack() = default;
 
-            void reset() noexcept {
+            DAKING_ALWAYS_INLINE void reset() noexcept {
                 top.store(tagged_ptr{ nullptr, 0 });
 			}
 
-            DAKING_NO_TSAN
+            DAKING_ALWAYS_INLINE DAKING_NO_TSAN
             void push(node* chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr new_top{ chunk, 0 };
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
@@ -170,7 +178,7 @@ namespace daking {
                 ));
             }
 
-            DAKING_NO_TSAN
+            DAKING_ALWAYS_INLINE DAKING_NO_TSAN
             bool try_pop(node*& chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
                 tagged_ptr new_top;
@@ -231,7 +239,7 @@ namespace daking {
         MPSC_queue& operator=(MPSC_queue&&)      = delete;
 
         template <typename...Args>
-        void emplace(Args&&... args) {
+        DAKING_ALWAYS_INLINE void emplace(Args&&... args) {
             node* new_node = Allocate();
             new (std::addressof(new_node->value_)) value_type(std::forward<Args>(args)...);
 
@@ -247,15 +255,15 @@ namespace daking {
 #endif 
         }
 
-        void enqueue(const_reference value) {
+        DAKING_ALWAYS_INLINE void enqueue(const_reference value) {
             emplace(value);
         }
 
-        void enqueue(value_type&& value) {
+        DAKING_ALWAYS_INLINE void enqueue(value_type&& value) {
             emplace(std::move(value));
         }
 
-        bool try_dequeue(value_type& result) noexcept {
+        DAKING_ALWAYS_INLINE bool try_dequeue(value_type& result) noexcept {
 			node* next = tail_->next_.load(std::memory_order_acquire);
             if (next) [[likely]]{
                 result = std::move(next->value_);
@@ -280,26 +288,26 @@ namespace daking {
         }
 #endif 
 
-        bool empty() const noexcept {
+        DAKING_ALWAYS_INLINE bool empty() const noexcept {
             return tail_->next_.load(std::memory_order_acquire) == nullptr;
 		}
 
-        static size_type global_node_size_apprx() noexcept {
+        DAKING_ALWAYS_INLINE static size_type global_node_size_apprx() noexcept {
             return global_node_count_.load(std::memory_order_acquire);
         }
 
-        static size_type reserve_global_chunk(size_type chunk_count){
+        DAKING_ALWAYS_INLINE static size_type reserve_global_chunk(size_type chunk_count){
             Reserve_global_external(chunk_count);
         }
 
     private:
-        void Initial() {
+        DAKING_ALWAYS_INLINE void Initial() {
             node* dummy = Allocate();
             head_.store(dummy, std::memory_order_release);
             tail_ = dummy;
         }
 
-        node* Allocate() {
+        DAKING_ALWAYS_INLINE node* Allocate() {
             if (!thread_local_node_list_) [[unlikely]] {
                 while (!global_chunk_stack.try_pop(thread_local_node_list_)) {
                     Reserve_global_internal();
@@ -310,7 +318,7 @@ namespace daking {
             return res;
         }
 
-        void Deallocate(node* nd) noexcept {
+        DAKING_ALWAYS_INLINE void Deallocate(node* nd) noexcept {
             nd->next_ = thread_local_node_list_;
             thread_local_node_list_ = nd;
             if (++thread_local_node_count_ >= thread_local_capacity) [[unlikely]] {
