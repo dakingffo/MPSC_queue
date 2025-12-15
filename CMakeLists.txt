@@ -18,6 +18,14 @@ FetchContent_Declare(
 set(BENCHMARK_ENABLE_TESTING OFF)
 FetchContent_MakeAvailable(googlebenchmark)
 
+enable_testing()
+FetchContent_Declare(
+    googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+    FIND_PACKAGE_ARGS NAMES GTest CONFIG
+)
+FetchContent_MakeAvailable(googletest)
+
 find_package(Threads REQUIRED)
 
 # 通用编译选项定义
@@ -41,6 +49,24 @@ target_link_libraries(mpsc_bench
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:atomic>
 )
 target_compile_options(mpsc_bench ${COMMON_TARGET_PROPERTIES})
+
+# 单元测试可执行文件
+enable_testing()
+add_executable(mpsc_tests tests/test_MPSC.cpp)
+target_include_directories(mpsc_tests 
+    PRIVATE 
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(mpsc_tests
+    PRIVATE
+        GTest::gtest_main 
+        GTest::gmock         
+        Threads::Threads
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:atomic>
+)
+include(GoogleTest)
+gtest_discover_tests(mpsc_tests)
 
 # 日志系统示例
 add_executable(mpsc_log_system_example "examples/log_system.cpp")

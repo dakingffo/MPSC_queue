@@ -84,58 +84,90 @@ flowchart TD
     NextChunk2 -- "Empty: Request Page" --> GlobalMutex
 ```
 
-Due to the characteristic of using the global chunk stack to allocate thread-local queues in $O(1)$ chunks, in **SPSC-like** scenarios, the thread-local queues of producers and consumers have a high chance of achieving efficient reuse via the stack.
+Due to the characteristic of utilizing a global chunk stack for O(1) allocation of thread-local queues in units of 'chunks', the thread-local queues for producers and the consumer have a high chance of achieving efficient reuse via the stack in **SPSClike** scenarios.
 
-Therefore, `daking::MPSC_queue` is very suitable for **non-uniform production and message burst scenarios**, meaning it excels in situations where "producers non-uniformly burst message floods."
-The performance benchmarks section below validates this.
+In scenarios with uniform competition among multiple producers, constrained by the limitations of the linked list structure, continuous `enqueue` operations lead to frequent CAS contention for the head of the list, which touches the performance floor of this queue.
 
-## Benchmarks
+Therefore, the **`daking::MPSC_queue`** is suitable for:
 
-Test Environment:
-Run on (16 X 3992 MHz CPU s)
-CPU Caches:
-L1 Data 32 KiB (x8)
-L1 Instruction 32 KiB (x8)
-L2 Unified 1024 KiB (x8)
-L3 Unified 16384 KiB (x1)
+1.  **Scenarios with uneven production and message bursts**, meaning it is suitable for situations where 'producers non-uniformly burst message floods'. This significantly reduces CAS contention in MPSC, quickly pulling the throughput back to a performance level similar to the SPSC scenario.
+2.  **Scenarios where producers perform bulk enqueue operations**, i.e., where producers aggregate production or possess a write buffer and perform bulk enqueues. This is because `daking::MPSC_queue::enqueue_bulk` first uses highly efficient thread-local operations to connect the data into a linked list segment, and then performs only one CAS operation to merge this segment of nodes into the queue. 
 
-### **Part One: Uniform MPSC Contention (Steady Continuous Writes)**
+The performance tests below demonstrate both points.
 
-This scenario tests the throughput capacity when multiple producers continuously and uniformly write to the queue.
+## Performance Benchmark Analysis
 
-| Scenario | Producers (P) | Consumers (C) | Throughput (M int/s) | Notes |
+This report presents the complete performance profile of the `daking::MPSC_queue` across various concurrent load scenarios. This queue is designed to achieve maximum performance and resilience in MPSC (Multiple-Producer, Single-Consumer) environments through **Thread-Local Optimization** and **Bulk Atomicity**.
+
+**Reference Queue Note:** This report includes performance data for `moodycamel::ConcurrentQueue` for comparison. Please note that `moodycamel::ConcurrentQueue` is an **MPMC (Multiple-Producer, Multiple-Consumer)** queue and is not specialized for MPSC scenarios.
+
+### 1. Test Environment and Configuration
+
+* **CPU:** Run on (16 X 3992 MHz CPUs)
+* **CPU Caches:**
+    * L1 Data 32 KiB (x8)
+    * L1 Instruction 32 KiB (x8)
+    * L2 Unified 1024 KiB (x8)
+    * L3 Unified 16384 KiB (x1)
+
+### 2. Detailed Performance Data Tables (Throughput: M int/s)
+
+**Part I: Uniform MPSC Contention (Single-Element Enqueue)**
+
+This scenario tests the throughput when multiple producers write to the queue continuously and uniformly, reflecting the **contention floor** of the linked-list structure.
+
+| Queue | P (Producers) | C (Consumer) | **Throughput (M int/s)** | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **SPSC Baseline** | 1 | 1 | **150.146** | Theoretical single-threaded write limit |
-| Stable MPSC | 2 | 1 | 46.9628 | Performance degradation due to producer contention |
-| Stable MPSC | 4 | 1 | 58.246 | Peak performance for uniform writes |
-| Stable MPSC | 8 | 1 | 49.686 | |
-| Stable MPSC | 16 | 1 | 43.1969 | Tends to stabilize |
+| **daking** | 1 | 1 | **150.146** | **SPSC Baseline (Fast Path)** |
+| daking | 2 | 1 | 46.9628 | |
+| daking | 4 | 1 | 58.246 | Peak under uniform contention |
+| daking | 8 | 1 | 49.686 | |
+| daking | 16 | 1 | 43.1969 | Contention floor |
+| **moodycamel** | 1 | 1 | 42.8316 | |
+| **moodycamel** | **4** | **1** | **61.1848** | **Best performance in this section (P=4)** |
 
-### **Part Two: Non-Uniform Sequential Burst (Uneven Wave Aggregation)**
+**Part II: Uneven Sequential Burst (Uneven Wave Aggregation)**
 
-This scenario simulates $4$ producers sending messages sequentially in a staggered manner (burst traffic).
-The peak relay percentage refers to the **percentage of items already written by the current producer when the next producer begins writing, relative to the total number of items produced by each producer.**
-As the relay percentage increases, the load gets closer to sequential writing, and contention decreases.
+This scenario simulates 4 producers sending messages in a staggered, out-of-phase burst, testing the queue's **performance resilience** under **uneven/sparse load**.
+The **Relay Percentage** indicates the percentage of total items written by the current producer when the next producer starts. A higher percentage indicates lower contention.
 
-| Peak Relay Percentage (1 - 1/den) | Throughput (M int/s) | Improvement relative to Stable 4P | Design Advantage |
-| :--- | :--- | :--- | :--- |
-| $50.0\%$ | $59.9869$ | $+27.0\%$ | Intermittent concurrency, slight performance improvement |
-| $80.0\%$ | $76.344$ | $+61.6\%$ | Performance improvement when contention is significantly reduced |
-| $90.0\%$ | $85.9909$ | $+82.0\%$ | Performance improvement when producers are extremely non-uniform |
-| $95.0\%$ | $118.98$ | $+152.6\%$ | **Performance approaches SPSC peak** |
-| **$98.0\%$** | **$137.092$** | **$+190.2\%$** | Four nearly independent bursts, almost achieving SPSC efficiency |
+| Queue | P (Producers) | C (Consumer) | Relay % | **Throughput (M int/s)** | Improvement over Stable 4P |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **daking** | 4 | 1 | $50.0\%$ | $59.9869$ | $+2.99\%$ |
+| daking | 4 | 1 | $80.0\%$ | $76.344$ | $+31.07\%$ |
+| daking | 4 | 1 | $90.0\%$ | $85.9909$ | $+47.63\%$ |
+| daking | 4 | 1 | $95.0\%$ | $118.98$ | $+104.28\%$ |
+| daking | 4 | 1 | **$98.0\%$** | **$137.092$** | **$+135.35\%$** (Near SPSC limit) |
+| **moodycamel** | 4 | 1 | $50.0\%$ | **50.9436** | - |
+| **moodycamel** | 4 | 1 | $98.0\%$ | $45.2742$ | **No significant elastic recovery** |
 
-### Performance Conclusion
+**Part III: Bulk Enqueue Operation**
 
-This data strongly demonstrates the unique optimization effect of the `daking::MPSC_queue` architecture:
+This scenario tests the throughput when producers use the `enqueue_bulk` interface, verifying its ability to overcome the saturation contention bottleneck.
 
-1.  **Exceptional SPSC Performance:** The base SPSC throughput reaches $150 \text{ M/s}$, setting a high-efficiency foundation for all scenarios.
-2.  **Stable Throughput:** In the uniform MPSC write scenario, throughput stabilizes around $45 \text{ M/s}$.
-3.  **Astonishing Anti-Burst Capability:** In the non-uniform sequential burst scenario, the queue's throughput **soars from $47 \text{ M/s}$ to $137 \text{ M/s}$**.
+| Queue | P (Producers) | C (Consumer) | **Throughput (M int/s)** | Improvement over Single-Element MPSC | Mechanism Verification |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **daking** | 1 | 1 | **238.703** | $+45.7\%$ (vs. 1P Single) | |
+| daking | 2 | 1 | 165.611 | $+252.6\%$ (vs. 2P Single) | |
+| daking | 4 | 1 | 168.673 | $+189.6\%$ (vs. 4P Single) | **Contention Breakthrough** |
+| daking | 8 | 1 | 165.723 | $+233.5\%$ (vs. 8P Single) | |
+| daking | 16 | 1 | **161.448** | $+273.7\%$ (vs. 16P Single) | **Sustained high throughput under saturation** |
+| **moodycamel** | **2** | **1** | **68.9161** | **Best performance in this section (P=2)** | |
+| moodycamel | 16 | 1 | 43.4848 | No bulk advantage at 16P |
+
+### 3. Conclusion
+
+1.  **Elastic Recovery: Performance Guarantee under Uneven Load**
+    * **Data Point:** Under sparse load ($\text{98\%}$ relay), **daking** throughput skyrockets from $\sim 58 \text{ M/s}$ to **$\sim 137 \text{ M/s}$**.
+    * **Conclusion:** The **Thread-Local Optimization** of `daking::MPSC_queue` provides a significant advantage under uneven loads, enabling **elastic performance recovery** and guaranteeing low latency.
+
+2.  **Bulk Atomicity Breakthrough**
+    * **Data Point:** Under $\text{P}=16$ saturated contention, **daking** bulk operation performance reaches **$\sim 161 \text{ M/s}$**, nearly 4 times the single-element throughput.
+    * **Conclusion:** The **Bulk Atomicity** mechanism  (single CAS submission of a locally built list segment) in `daking::MPSC_queue` largely overcomes the contention bottleneck of linked-list MPSC queues, resulting in outstanding performance.
 
 ## Advantages
 
-1.  High throughput during efficient uniform producer writes and extremely high throughput during non-uniform producer bursts.
+1.  High throughput during efficient uniform producer batch writes and extremely high throughput during non-uniform producer bursts.
 2.  The **global mutex** only needs to be locked $\log(N)$ times to allocate new nodes, greatly reducing memory allocation overhead.
 3.  Fast **Enqueue** and **Dequeue** operations, both with **$O(1)$** complexity. (Derived from Dmitry Vyukov).
 4.  Utilizing a **thread-local pool** reduces contention for global resources.
@@ -168,17 +200,33 @@ queue.enqueue(1);
 
 // Consumer
 int get;
-while (!(queue.try_dequeue(get))) {
-    // Handling wait...
+// Attempt to dequeue until successful or the queue is empty
+while (!queue.try_dequeue(get)) {
+    // Handle waiting (e.g., yielding, sleeping, or C++20 wait/notify)...
     if (queue.empty()) {
-        // The queue size cannot be precisely tracked. If you absolutely need it, 
-        // you can use an external atomic variable for tracking.
+        // The queue size cannot be precisely tracked internally. 
+        // If necessary, use an external atomic variable for tracking.
         break;
     }
 }
+
+std::vector<int> input{1, 2, 3};
+queue.enqueue_bulk(input.begin(), 3);
+// enqueue_bulk performs multiple thread_local operations but only one CAS operation, resulting in much faster speed.
+// enqueue_bulk(it, n): Enqueues elements from an iterator; enqueue_bulk(value, n): Enqueues the value n times. 
+
+int max_fetch = 3;
+std::vector<int> output;
+// try_dequeue_bulk is likely intended here, but using 'results' from previous context for consistency with the prompt.
+size_t count = queue.try_dequeue_bulk(std::back_inserter(output), max_fetch);
+// Returns the number of successfully dequeued elements (not exceeding max_fetch).
+// Supports both Forward Iterators (e.g., output.begin()) and Output Iterators (e.g., back_inserter).
+
 ```
 
-If using C++20 or later, a `dequeue` method is available for **blocking wait**, but using it will lead to a performance degradation resembling SPSClike performance.
+Additional Note on C++20 Features:
+If C++20 or later is used, the 'dequeue' and 'dequeue_bulk' methods provide blocking wait functionality. 
+However, using these blocking methods may lead to performance degradation when the load state resembles SPSC-like behavior.
 
 **Warning: If the queue is destructed while there are still nodes inside, the destructors for the objects stored in those nodes cannot be called\!**
 

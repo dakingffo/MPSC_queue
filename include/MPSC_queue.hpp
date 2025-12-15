@@ -54,6 +54,8 @@ SOFTWARE.
 #   endif
 #endif // !DAKING_ALWAYS_INLINE
 
+#include <type_traits>
+#include <iterator>
 #include <utility>
 #include <atomic>
 #include <mutex>
@@ -127,7 +129,7 @@ namespace daking {
             node() : next_chunk_(nullptr) {
                 next_.store(nullptr, std::memory_order_release);
             }
-            ~node() = default;
+            ~node() { /* Don't call destuctor of value_ here*/}
 
             union {
                 value_type      value_;
@@ -208,13 +210,7 @@ namespace daking {
     public:
         MPSC_queue() {
             global_instance_count_++;
-            {   
-                std::lock_guard<std::mutex> lock(global_mutex_);
-                if (!global_thread_local_manager_) {
-                    global_thread_local_manager_ = new std::vector<std::pair<node**, size_type*>>();
-                }
-                global_thread_local_manager_->emplace_back(&thread_local_node_list_, &thread_local_node_count_);
-            }
+            Register_global_manager();
             Initial();
         }
         MPSC_queue(size_type initial_global_chunk_count) : MPSC_queue() {
@@ -243,7 +239,7 @@ namespace daking {
             node* new_node = Allocate();
             new (std::addressof(new_node->value_)) value_type(std::forward<Args>(args)...);
 
-            node* old_head = head_.exchange(new_node, std::memory_order_acq_rel);
+            node* old_head = head_.exchange(new_node, std::memory_order_acquire);
 #if DAKING_HAS_CXX20_OR_ABOVE
             node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
 #endif 
@@ -263,10 +259,68 @@ namespace daking {
             emplace(std::move(value));
         }
 
-        DAKING_ALWAYS_INLINE bool try_dequeue(value_type& result) noexcept {
+        DAKING_ALWAYS_INLINE void enqueue_bulk(const_reference value, size_type n) {
+            // N times thread_local operation, One time CAS operation.
+            // So it is more efficient than N times enqueue.
+            node* first_new_node = Allocate();
+            node* prev_node = first_new_node;
+            new (std::addressof(first_new_node->value_)) value_type(value);
+            for (size_type i = 1; i < n; i++) {
+                node* new_node = Allocate();
+                new (std::addressof(new_node->value_)) value_type(value);
+                prev_node->next_.store(new_node, std::memory_order_relaxed);
+                prev_node = new_node;
+            }
+            prev_node->next_.store(nullptr, std::memory_order_relaxed);
+            node* old_head = head_.exchange(prev_node, std::memory_order_acquire);
+#if DAKING_HAS_CXX20_OR_ABOVE
+            node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
+#endif 
+            old_head->next_.store(first_new_node, std::memory_order_release);
+#if DAKING_HAS_CXX20_OR_ABOVE
+            if (old_head_next == nullptr) [[unlikely]] {
+                old_head->next_.notify_one();
+            }
+#endif 
+        }
+
+		template <typename InputIt>
+        DAKING_ALWAYS_INLINE void enqueue_bulk(InputIt it, size_type n) {
+			// Enqueue n elements from input iterator.
+            static_assert(std::is_base_of_v<std::input_iterator_tag,
+                typename std::iterator_traits<InputIt>::iterator_category>,
+                "Iterator must be at least input iterator.");
+            static_assert(std::is_same_v<typename std::iterator_traits<InputIt>::value_type, value_type>,
+                "The value type of iterator must be same as MPSC_queue::value_type.");
+
+            node* first_new_node = Allocate();
+            node* prev_node = first_new_node;
+            new (std::addressof(first_new_node->value_)) value_type(*it++);
+            for (size_type i = 1; i < n; i++) {
+                node* new_node = Allocate();
+                new (std::addressof(new_node->value_)) value_type(*it++);
+                prev_node->next_.store(new_node,  std::memory_order_relaxed);
+                prev_node = new_node;
+            }
+            prev_node->next_.store(nullptr, std::memory_order_relaxed);
+			node* old_head = head_.exchange(prev_node, std::memory_order_acquire);
+#if DAKING_HAS_CXX20_OR_ABOVE
+            node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
+#endif 
+			old_head->next_.store(first_new_node, std::memory_order_release);
+#if DAKING_HAS_CXX20_OR_ABOVE
+            if (old_head_next == nullptr) [[unlikely]] {
+                old_head->next_.notify_one();
+            }
+#endif 
+		}
+
+        template <typename T>
+        DAKING_ALWAYS_INLINE bool try_dequeue(T& value) noexcept {
+            static_assert(std::is_assignable_v<T&, value_type>);
 			node* next = tail_->next_.load(std::memory_order_acquire);
             if (next) [[likely]]{
-                result = std::move(next->value_);
+                value = std::move(next->value_);
                 next->value_.~value_type();
 
                 Deallocate(std::exchange(tail_, next));
@@ -277,14 +331,52 @@ namespace daking {
             }
         }
 
+        template <typename ForwardIt>
+        DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(ForwardIt it, size_type n) noexcept {
+            static_assert(
+                std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
+                std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type> ||
+                std::is_same_v<typename std::iterator_traits<ForwardIt>::iterator_category, std::output_iterator_tag>,
+                "Iterator must be at least output iterator or forward iterator.");
+
+			size_type count = 0;
+            while (count < n && try_dequeue(*it)) {
+                count++;
+                it++;
+            }
+			return count;
+        }
+
 #if DAKING_HAS_CXX20_OR_ABOVE
-        void dequeue(value_type& result) noexcept {
+        template <typename T>
+        void dequeue(T& result) noexcept {
+            static_assert(std::is_assignable_v<T&, value_type>);
             while (true) {
                 if (try_dequeue(result)) {
                     return;
                 }
                 tail_->next_.wait(nullptr, std::memory_order_acquire);
             }
+        }
+
+		template <typename ForwardIt>
+        void dequeue_bulk(ForwardIt it, size_type n) noexcept {
+            static_assert(
+                std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
+                std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type> ||
+                std::is_same_v<typename std::iterator_traits<ForwardIt>::iterator_category, std::output_iterator_tag>,
+                "Iterator must be at least output iterator or forward iterator.");
+
+            size_type count = 0;
+            while (count < n) {
+                if (try_dequeue(*it)) {
+                    count++;
+                    it++;
+                }
+                else {
+                    tail_->next_.wait(nullptr, std::memory_order_acquire);
+                }
+			}
         }
 #endif 
 
@@ -296,7 +388,7 @@ namespace daking {
             return global_node_count_.load(std::memory_order_acquire);
         }
 
-        DAKING_ALWAYS_INLINE static size_type reserve_global_chunk(size_type chunk_count){
+        DAKING_ALWAYS_INLINE static void reserve_global_chunk(size_type chunk_count){
             Reserve_global_external(chunk_count);
         }
 
@@ -373,6 +465,14 @@ namespace daking {
             }
 
             global_node_count_.store(global_count + count, std::memory_order_release);
+        }
+
+        static void Register_global_manager() noexcept {
+            std::lock_guard<std::mutex> lock(global_mutex_);
+            if (!global_thread_local_manager_) {
+                global_thread_local_manager_ = new std::vector<std::pair<node**, size_type*>>();
+            }
+            global_thread_local_manager_->emplace_back(&thread_local_node_list_, &thread_local_node_count_);
         }
 
         static void Free_global() {
