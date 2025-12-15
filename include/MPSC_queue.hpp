@@ -29,12 +29,16 @@ SOFTWARE.
 #ifndef DAKING_MPSC_QUEUE_HPP
 #define DAKING_MPSC_QUEUE_HPP
 
+
 #ifndef DAKING_NO_TSAN
-#   define DAKING_NO_TSAN
 #   if defined(__has_feature) 
 #       if __has_feature(thread_sanitizer)
-            __attribute__((no_sanitize("thread")))
+#           define DAKING_NO_TSAN __attribute__((no_sanitize("thread")))
+#       else
+#           define DAKING_NO_TSAN
 #       endif
+#   else
+#       define DAKING_NO_TSAN  // <--- GCC 走到了这里
 #   endif
 #endif // !DAKING_NO_TSAN
 
@@ -118,6 +122,7 @@ namespace daking {
 
         using value_type      = Ty;
         using size_type       = std::size_t;
+        using pointer         = value_type*;
         using reference       = value_type&;
         using const_reference = const value_type&;
 
@@ -126,14 +131,14 @@ namespace daking {
 
     private:
         struct node {
-            node() : next_chunk_(nullptr) {
+            node() {
                 next_.store(nullptr, std::memory_order_release);
             }
             ~node() { /* Don't call destuctor of value_ here*/}
 
             union {
-                value_type      value_;
-                node*           next_chunk_;
+                value_type value_;
+                node*      next_chunk_;
             };
             std::atomic<node*>  next_;
         };
@@ -162,8 +167,7 @@ namespace daking {
                 top.store(tagged_ptr{ nullptr, 0 });
 			}
 
-            DAKING_ALWAYS_INLINE DAKING_NO_TSAN
-            void push(node* chunk) noexcept /*Pointer Swap*/ {
+            DAKING_NO_TSAN void push(node* chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr new_top{ chunk, 0 };
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
                 // If TB read old_top, and TA pop the old_top then
@@ -180,10 +184,9 @@ namespace daking {
                 ));
             }
 
-            DAKING_ALWAYS_INLINE DAKING_NO_TSAN
-            bool try_pop(node*& chunk) noexcept /*Pointer Swap*/ {
+            DAKING_NO_TSAN bool try_pop(node*& chunk) noexcept /*Pointer Swap*/ {
                 tagged_ptr old_top = top.load(std::memory_order_relaxed);
-                tagged_ptr new_top;
+                tagged_ptr new_top{};
 
                 do {
                     if (!old_top.node_) {
@@ -196,9 +199,9 @@ namespace daking {
                     // so that B will read a invaild value, but this value will not pass the next CAS.(old_top have been updated by A)
                     // Actually, this is a data race, but CAS protect B form UB. 
                 } while (!top.compare_exchange_weak(
-                    old_top, new_top,   
+                    old_top, new_top,
                     std::memory_order_acq_rel,
-                    std::memory_order_relaxed
+                    std::memory_order_acquire
                 ));
 				chunk = old_top.node_;
                 return true;
@@ -213,7 +216,7 @@ namespace daking {
             Register_global_manager();
             Initial();
         }
-        MPSC_queue(size_type initial_global_chunk_count) : MPSC_queue() {
+        explicit MPSC_queue(size_type initial_global_chunk_count) : MPSC_queue() {
             reserve_global_chunk(initial_global_chunk_count);
         }
 
@@ -237,7 +240,7 @@ namespace daking {
         template <typename...Args>
         DAKING_ALWAYS_INLINE void emplace(Args&&... args) {
             node* new_node = Allocate();
-            new (std::addressof(new_node->value_)) value_type(std::forward<Args>(args)...);
+            Construct_at(std::addressof(new_node->value_), std::forward<Args>(args)...);
 
             node* old_head = head_.exchange(new_node, std::memory_order_acquire);
 #if DAKING_HAS_CXX20_OR_ABOVE
@@ -264,10 +267,10 @@ namespace daking {
             // So it is more efficient than N times enqueue.
             node* first_new_node = Allocate();
             node* prev_node = first_new_node;
-            new (std::addressof(first_new_node->value_)) value_type(value);
+            Construct_at(std::addressof(first_new_node->value_), value);
             for (size_type i = 1; i < n; i++) {
                 node* new_node = Allocate();
-                new (std::addressof(new_node->value_)) value_type(value);
+                Construct_at(std::addressof(new_node->value_), value);
                 prev_node->next_.store(new_node, std::memory_order_relaxed);
                 prev_node = new_node;
             }
@@ -281,7 +284,7 @@ namespace daking {
             if (old_head_next == nullptr) [[unlikely]] {
                 old_head->next_.notify_one();
             }
-#endif 
+#endif
         }
 
 		template <typename InputIt>
@@ -295,10 +298,10 @@ namespace daking {
 
             node* first_new_node = Allocate();
             node* prev_node = first_new_node;
-            new (std::addressof(first_new_node->value_)) value_type(*it++);
+            Construct_at(std::addressof(first_new_node->value_), *it++);
             for (size_type i = 1; i < n; i++) {
                 node* new_node = Allocate();
-                new (std::addressof(new_node->value_)) value_type(*it++);
+                Construct_at(std::addressof(new_node->value_), *it++);
                 prev_node->next_.store(new_node,  std::memory_order_relaxed);
                 prev_node = new_node;
             }
@@ -317,12 +320,11 @@ namespace daking {
 
         template <typename T>
         DAKING_ALWAYS_INLINE bool try_dequeue(T& value) noexcept {
-            static_assert(std::is_assignable_v<T&, value_type>);
+            static_assert(std::is_assignable_v<T&, value_type&&>);
 			node* next = tail_->next_.load(std::memory_order_acquire);
             if (next) [[likely]]{
                 value = std::move(next->value_);
-                next->value_.~value_type();
-
+                Destruct_at(std::addressof(next->value_));
                 Deallocate(std::exchange(tail_, next));
                 return true;
             }
@@ -350,7 +352,7 @@ namespace daking {
 #if DAKING_HAS_CXX20_OR_ABOVE
         template <typename T>
         void dequeue(T& result) noexcept {
-            static_assert(std::is_assignable_v<T&, value_type>);
+            static_assert(std::is_assignable_v<T&, value_type&&>);
             while (true) {
                 if (try_dequeue(result)) {
                     return;
@@ -397,6 +399,15 @@ namespace daking {
             node* dummy = Allocate();
             head_.store(dummy, std::memory_order_release);
             tail_ = dummy;
+        }
+        
+        template <typename...Args> DAKING_ALWAYS_INLINE 
+        void Construct_at(pointer address, Args&&...args) noexcept(std::is_nothrow_constructible_v<value_type, Args...>) {
+            new (address) value_type(std::forward<Args>(args)...);
+        }
+
+        DAKING_ALWAYS_INLINE void Destruct_at(pointer address) noexcept {
+            address->~value_type();
         }
 
         DAKING_ALWAYS_INLINE node* Allocate() {

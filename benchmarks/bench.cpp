@@ -1,5 +1,5 @@
 #include "MPSC_queue.hpp" 
-#include <moodycamel/concurrentqueue.h>
+// #include <moodycamel/concurrentqueue.h>
 #include <benchmark/benchmark.h>
 #include <thread>
 #include <vector>
@@ -7,8 +7,8 @@
 #include <string>
 
 constexpr size_t TOTAL_OPS = 100000000;
-using TestQueue = moodycamel::ConcurrentQueue<int>;
-// using TestQueue = daking::MPSC_queue<int>;
+// using TestQueue = moodycamel::ConcurrentQueue<int>;
+using TestQueue = daking::MPSC_queue<int>;
 
 void producer_thread(TestQueue* q, size_t items_to_push, std::atomic_bool* start) {
     while (!start->load(std::memory_order_acquire)) {
@@ -128,9 +128,6 @@ BENCHMARK(BM_4x_UnevenWave_SPSClike_Aggregation)
     ->UseRealTime()
     ->MinWarmUpTime(2.0);
 
-BENCHMARK_MAIN();
-
-
 void producer_thread_enqueue_bulk(TestQueue* q, size_t items_to_push, std::atomic_bool* start) {
     while (!start->load(std::memory_order_acquire)) {
         std::this_thread::yield();
@@ -175,13 +172,15 @@ static void BM_MPSC_Throughput_Bulk(benchmark::State& state) {
 }
 
 BENCHMARK(BM_MPSC_Throughput_Bulk)
-->Args({ 1 })
-->Args({ 2 })
-->Args({ 4 })
-->Args({ 8 })
-->Args({ 16 })
-->UseRealTime()
-->MinWarmUpTime(2.0);
+    ->Args({ 1 })
+    ->Args({ 2 })
+    ->Args({ 4 })
+    ->Args({ 8 })
+    ->Args({ 16 })
+    ->UseRealTime()
+    ->MinWarmUpTime(2.0);
+
+BENCHMARK_MAIN();
 
 /*
 daking:
