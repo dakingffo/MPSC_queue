@@ -38,7 +38,7 @@ SOFTWARE.
 #           define DAKING_NO_TSAN
 #       endif
 #   else
-#       define DAKING_NO_TSAN  // <--- GCC 走到了这里
+#       define DAKING_NO_TSAN
 #   endif
 #endif // !DAKING_NO_TSAN
 
@@ -46,7 +46,7 @@ SOFTWARE.
     #if defined(_MSC_VER) 
         #define DAKING_HAS_CXX20_OR_ABOVE _MSVC_LANG >= 202002L
     #else 
-    #define DAKING_HAS_CXX20_OR_ABOVE __cplusplus >= 202002L
+        #define DAKING_HAS_CXX20_OR_ABOVE __cplusplus >= 202002L
     #endif
 #endif // !DAKING_HAS_CXX20_OR_ABOVE
 
