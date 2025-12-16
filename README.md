@@ -14,7 +14,7 @@
 
 *Lock-free unbounded high-performance MPSC queue*
 
-[English](./README.md) 
+[简体中文](./README.zh.md) 
 
 ## Structural Design
 

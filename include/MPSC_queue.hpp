@@ -431,6 +431,14 @@ namespace daking {
             }
         }
 
+        static void Register_global_manager() noexcept {
+            std::lock_guard<std::mutex> lock(global_mutex_);
+            if (!global_thread_local_manager_) {
+                global_thread_local_manager_ = new std::vector<std::pair<node**, size_type*>>();
+            }
+            global_thread_local_manager_->emplace_back(&thread_local_node_list_, &thread_local_node_count_);
+        }
+
         static void Reserve_global_external(size_type chunk_count) {
             std::lock_guard<std::mutex> lock(global_mutex_);
             size_type global_count = global_node_count_.load(std::memory_order_relaxed);
@@ -476,14 +484,6 @@ namespace daking {
             }
 
             global_node_count_.store(global_count + count, std::memory_order_release);
-        }
-
-        static void Register_global_manager() noexcept {
-            std::lock_guard<std::mutex> lock(global_mutex_);
-            if (!global_thread_local_manager_) {
-                global_thread_local_manager_ = new std::vector<std::pair<node**, size_type*>>();
-            }
-            global_thread_local_manager_->emplace_back(&thread_local_node_list_, &thread_local_node_count_);
         }
 
         static void Free_global() {
