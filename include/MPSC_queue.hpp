@@ -117,7 +117,6 @@ namespace daking {
     class MPSC_queue {
     public:
         static_assert(std::is_object_v<Ty>, "Ty must be object.");
-        static_assert(std::is_move_constructible_v<Ty>, "Ty must be move constructible.");
 		static_assert((ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2.");
 
         using value_type      = Ty;
@@ -319,8 +318,10 @@ namespace daking {
 		}
 
         template <typename T>
-        DAKING_ALWAYS_INLINE bool try_dequeue(T& value) noexcept {
+        DAKING_ALWAYS_INLINE bool try_dequeue(T& value) 
+            noexcept(std::is_nothrow_assignable_v<T&, value_type&&>) {
             static_assert(std::is_assignable_v<T&, value_type&&>);
+
 			node* next = tail_->next_.load(std::memory_order_acquire);
             if (next) [[likely]]{
                 value = std::move(next->value_);
@@ -334,10 +335,11 @@ namespace daking {
         }
 
         template <typename ForwardIt>
-        DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(ForwardIt it, size_type n) noexcept {
+        DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(ForwardIt it, size_type n) 
+            noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&>) {
             static_assert(
                 std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
-                std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type> ||
+                std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type&&> ||
                 std::is_same_v<typename std::iterator_traits<ForwardIt>::iterator_category, std::output_iterator_tag>,
                 "Iterator must be at least output iterator or forward iterator.");
 
@@ -351,8 +353,10 @@ namespace daking {
 
 #if DAKING_HAS_CXX20_OR_ABOVE
         template <typename T>
-        void dequeue(T& result) noexcept {
+        void dequeue(T& result) 
+            noexcept(std::is_nothrow_assignable_v<T&, value_type&&>) {
             static_assert(std::is_assignable_v<T&, value_type&&>);
+
             while (true) {
                 if (try_dequeue(result)) {
                     return;
@@ -362,7 +366,8 @@ namespace daking {
         }
 
 		template <typename ForwardIt>
-        void dequeue_bulk(ForwardIt it, size_type n) noexcept {
+        void dequeue_bulk(ForwardIt it, size_type n) 
+            noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&>) {
             static_assert(
                 std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
                 std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type> ||
