@@ -12,7 +12,7 @@
 
 *lockfree unbounded high performance MPSC queue*
 
-*Lock-free unbounded high-performance MPSC queue*
+*无锁无界的高性能MPSC队列*
 
 [简体中文](./README.zh.md) 
 
