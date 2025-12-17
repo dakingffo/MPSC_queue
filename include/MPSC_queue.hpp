@@ -242,7 +242,7 @@ namespace daking {
             node* new_node = Allocate();
             Construct_at(std::addressof(new_node->value_), std::forward<Args>(args)...);
 
-            node* old_head = head_.exchange(new_node, std::memory_order_acquire);
+            node* old_head = head_.exchange(new_node, std::memory_order_acq_rel);
 #if DAKING_HAS_CXX20_OR_ABOVE
             node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
 #endif 
@@ -275,7 +275,7 @@ namespace daking {
                 prev_node = new_node;
             }
             prev_node->next_.store(nullptr, std::memory_order_relaxed);
-            node* old_head = head_.exchange(prev_node, std::memory_order_acquire);
+            node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
 #if DAKING_HAS_CXX20_OR_ABOVE
             node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
 #endif 
@@ -306,7 +306,7 @@ namespace daking {
                 prev_node = new_node;
             }
             prev_node->next_.store(nullptr, std::memory_order_relaxed);
-			node* old_head = head_.exchange(prev_node, std::memory_order_acquire);
+			node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
 #if DAKING_HAS_CXX20_OR_ABOVE
             node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
 #endif 
