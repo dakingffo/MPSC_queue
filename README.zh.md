@@ -108,6 +108,7 @@ L1 Data 32 KiB(x8)
 L1 Instruction 32 KiB(x8)
 L2 Unified 1024 KiB(x8)
 L3 Unified 16384 KiB(x1)
+Compiler: MSVC -O2
 
 ### 2. 详细性能数据表 (吞吐量：M int/s)
 

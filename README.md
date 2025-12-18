@@ -52,7 +52,7 @@ flowchart TD
     class MPSC_QUEUE QUEUE
 
     subgraph THREAD_LOCAL_NODE_POOL [Static Node Pool]
-        subgraph THREAD_LOCAL_CACHE [thead_local Dmitry Vyukov]
+        subgraph THREAD_LOCAL_CACHE [theard_local Dmitry Vyukov]
             direction TB
             LocalChunk_P1
             LocalChunk_P2
@@ -109,6 +109,7 @@ This report presents the complete performance profile of the `daking::MPSC_queue
     * L1 Instruction 32 KiB (x8)
     * L2 Unified 1024 KiB (x8)
     * L3 Unified 16384 KiB (x1)
+* **Compiler:** MSVC -O2
 
 ### 2. Detailed Performance Data Tables (Throughput: M int/s)
 

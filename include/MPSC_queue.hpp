@@ -319,7 +319,8 @@ namespace daking {
 
         template <typename T>
         DAKING_ALWAYS_INLINE bool try_dequeue(T& value) 
-            noexcept(std::is_nothrow_assignable_v<T&, value_type&&>) {
+            noexcept(std::is_nothrow_assignable_v<T&, value_type&&> && 
+                std::is_nothrow_destructible_v<value_type>) {
             static_assert(std::is_assignable_v<T&, value_type&&>);
 
 			node* next = tail_->next_.load(std::memory_order_acquire);
@@ -336,7 +337,8 @@ namespace daking {
 
         template <typename ForwardIt>
         DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(ForwardIt it, size_type n) 
-            noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&>) {
+            noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&> && 
+                std::is_nothrow_destructible_v<value_type>) {
             static_assert(
                 std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
                 std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type&&> ||
@@ -354,7 +356,8 @@ namespace daking {
 #if DAKING_HAS_CXX20_OR_ABOVE
         template <typename T>
         void dequeue(T& result) 
-            noexcept(std::is_nothrow_assignable_v<T&, value_type&&>) {
+            noexcept(std::is_nothrow_assignable_v<T&, value_type&&> && 
+                std::is_nothrow_destructible_v<value_type>) {
             static_assert(std::is_assignable_v<T&, value_type&&>);
 
             while (true) {
@@ -367,7 +370,8 @@ namespace daking {
 
 		template <typename ForwardIt>
         void dequeue_bulk(ForwardIt it, size_type n) 
-            noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&>) {
+            noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&> &&
+                std::is_nothrow_destructible_v<value_type>) {
             static_assert(
                 std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
                 std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type> ||
@@ -411,7 +415,7 @@ namespace daking {
             new (address) value_type(std::forward<Args>(args)...);
         }
 
-        DAKING_ALWAYS_INLINE void Destruct_at(pointer address) noexcept {
+        DAKING_ALWAYS_INLINE void Destruct_at(pointer address) noexcept(std::is_nothrow_destructible_v<value_type>) {
             address->~value_type();
         }
 
