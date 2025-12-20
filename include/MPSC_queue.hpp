@@ -361,10 +361,10 @@ namespace daking {
 
         template <typename ForwardIt, std::enable_if_t<std::is_base_of_v<std::forward_iterator_tag,
             typename std::iterator_traits<ForwardIt>::iterator_category>, int> = 0>
-        DAKING_ALWAYS_INLINE void try_dequeue_bulk(ForwardIt begin, ForwardIt end)
+        DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(ForwardIt begin, ForwardIt end)
             noexcept(std::is_nothrow_assignable_v<decltype(*begin), value_type&&> &&
                 std::is_nothrow_destructible_v<value_type>) {
-            try_dequeue_bulk(begin, (size_type)std::distance(begin, end));
+            return try_dequeue_bulk(begin, (size_type)std::distance(begin, end));
         }
 
 #if DAKING_HAS_CXX20_OR_ABOVE
