@@ -86,13 +86,15 @@ void worker_producer_task(int worker_id, int commands_to_send) {
         batch_buffer[current_count++] = std::move(cmd);
 
         if (current_count == BATCH_SIZE) {
-            g_command_queue.enqueue_bulk(std::make_move_iterator(batch_buffer), BATCH_SIZE);
+            std::move_iterator<Command*> move_it = std::make_move_iterator(batch_buffer);
+            g_command_queue.enqueue_bulk(std::move(move_it), BATCH_SIZE); // enqueue_bulk(it, size_t)
             current_count = 0;
         }
     }
 
     if (current_count > 0) {
-        g_command_queue.enqueue_bulk(std::make_move_iterator(batch_buffer), current_count);
+        std::move_iterator<Command*> move_it = std::make_move_iterator(batch_buffer);
+        g_command_queue.enqueue_bulk(std::move(move_it), std::move(move_it) + current_count); // enqueue_bulk(it, it)
     }
 
     std::cout << "Worker " << worker_id << " finished sending " << commands_to_send << " commands." << std::endl;

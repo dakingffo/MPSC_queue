@@ -317,6 +317,12 @@ namespace daking {
 #endif 
 		}
 
+        template <typename ForwardIt, std::enable_if_t<std::is_base_of_v<std::forward_iterator_tag,
+            typename std::iterator_traits<ForwardIt>::iterator_category>, int> = 0>
+        DAKING_ALWAYS_INLINE void enqueue_bulk(ForwardIt begin, ForwardIt end) {
+            enqueue_bulk(begin, (size_type)std::distance(begin, end));
+        }
+
         template <typename T>
         DAKING_ALWAYS_INLINE bool try_dequeue(T& value) 
             noexcept(std::is_nothrow_assignable_v<T&, value_type&&> && 
@@ -353,6 +359,14 @@ namespace daking {
 			return count;
         }
 
+        template <typename ForwardIt, std::enable_if_t<std::is_base_of_v<std::forward_iterator_tag,
+            typename std::iterator_traits<ForwardIt>::iterator_category>, int> = 0>
+        DAKING_ALWAYS_INLINE void try_dequeue_bulk(ForwardIt begin, ForwardIt end)
+            noexcept(std::is_nothrow_assignable_v<decltype(*begin), value_type&&> &&
+                std::is_nothrow_destructible_v<value_type>) {
+            try_dequeue_bulk(begin, (size_type)std::distance(begin, end));
+        }
+
 #if DAKING_HAS_CXX20_OR_ABOVE
         template <typename T>
         void dequeue(T& result) 
@@ -368,14 +382,14 @@ namespace daking {
             }
         }
 
-		template <typename ForwardIt>
-        void dequeue_bulk(ForwardIt it, size_type n) 
+		template <typename OutputIt>
+        void dequeue_bulk(OutputIt it, size_type n)
             noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&> &&
                 std::is_nothrow_destructible_v<value_type>) {
             static_assert(
-                std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
-                std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type> ||
-                std::is_same_v<typename std::iterator_traits<ForwardIt>::iterator_category, std::output_iterator_tag>,
+                std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<OutputIt>::iterator_category> &&
+                std::is_assignable_v<typename std::iterator_traits<OutputIt>::reference, value_type> ||
+                std::is_same_v<typename std::iterator_traits<OutputIt>::iterator_category, std::output_iterator_tag>,
                 "Iterator must be at least output iterator or forward iterator.");
 
             size_type count = 0;
@@ -388,6 +402,14 @@ namespace daking {
                     tail_->next_.wait(nullptr, std::memory_order_acquire);
                 }
 			}
+        }
+
+        template <typename ForwardIt, std::enable_if_t<std::is_base_of_v<std::forward_iterator_tag,
+            typename std::iterator_traits<ForwardIt>::iterator_category>, int> = 0>
+        DAKING_ALWAYS_INLINE void dequeue_bulk(ForwardIt begin, ForwardIt end)
+            noexcept(std::is_nothrow_assignable_v<decltype(*begin), value_type&&> &&
+            std::is_nothrow_destructible_v<value_type>) {
+            dequeue_bulk(begin, (size_type)std::distance(begin, end));
         }
 #endif 
 
@@ -421,7 +443,7 @@ namespace daking {
 
         DAKING_ALWAYS_INLINE node* Allocate() {
             if (!thread_local_node_list_) [[unlikely]] {
-                while (!global_chunk_stack.try_pop(thread_local_node_list_)) {
+                while (!global_chunk_stack_.try_pop(thread_local_node_list_)) {
                     Reserve_global_internal();
 				}
             }
@@ -434,7 +456,7 @@ namespace daking {
             nd->next_ = thread_local_node_list_;
             thread_local_node_list_ = nd;
             if (++thread_local_node_count_ >= thread_local_capacity) [[unlikely]] {
-				global_chunk_stack.push(thread_local_node_list_);
+				global_chunk_stack_.push(thread_local_node_list_);
                 thread_local_node_list_ = nullptr;
                 thread_local_node_count_ = 0;
             }
@@ -463,8 +485,8 @@ namespace daking {
                 if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {
                     // chunk_count = count / ThreadLocalCapacity
                     new_nodes[i].next_ .store(nullptr, std::memory_order_release);
-                    // mutex don't protect global_chunk_stack, so we need release
-                    global_chunk_stack.push(&new_nodes[i - thread_local_capacity + 1]);
+                    // mutex don't protect global_chunk_stack_, so we need release
+                    global_chunk_stack_.push(&new_nodes[i - thread_local_capacity + 1]);
                 }
             }
 
@@ -473,7 +495,7 @@ namespace daking {
 
         static void Reserve_global_internal() {
 			std::lock_guard<std::mutex> lock(global_mutex_);
-            if (global_chunk_stack.top.load(std::memory_order_acquire).node_) {
+            if (global_chunk_stack_.top.load(std::memory_order_acquire).node_) {
                 // if anyone have already allocate chunks, I return.
                 return;
 			}
@@ -487,8 +509,8 @@ namespace daking {
                     // chunk_count = count / ThreadLocalCapacity
                     new_nodes[i].next_ = nullptr;
                     std::atomic_thread_fence(std::memory_order_acq_rel);
-                    // mutex don't protect global_chunk_stack, so we need make a atomice fence
-                    global_chunk_stack.push(&new_nodes[i - thread_local_capacity + 1]);
+                    // mutex don't protect global_chunk_stack_, so we need make a atomice fence
+                    global_chunk_stack_.push(&new_nodes[i - thread_local_capacity + 1]);
 				}
             }
 
@@ -507,11 +529,11 @@ namespace daking {
             delete std::exchange(global_thread_local_manager_, nullptr);
 
             global_node_count_.store(0, std::memory_order_release);
-            global_chunk_stack.reset();
+            global_chunk_stack_.reset();
         }
 
         /* Global LockFree*/
-        static chunk_stack                                 global_chunk_stack;
+        static chunk_stack                                 global_chunk_stack_;
         static std::atomic_size_t                          global_instance_count_;
 
         /* Global Mutex*/ 
@@ -538,7 +560,7 @@ namespace daking {
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     alignas(Align) typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::chunk_stack
-        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_chunk_stack{};
+        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_chunk_stack_{};
 
     template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
     alignas(Align) std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_instance_count_ = 0;
