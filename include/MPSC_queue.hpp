@@ -201,7 +201,7 @@ namespace daking {
         };
 
         template <typename Queue, typename Alloc>
-        struct MPSC_manager : /* CRTP for EBO */
+        struct MPSC_manager :
             public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_node<Queue>>,
             public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_page<Queue>> {
             using size_type            = typename Queue::size_type;
