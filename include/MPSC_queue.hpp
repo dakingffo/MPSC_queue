@@ -59,6 +59,7 @@ SOFTWARE.
 #endif // !DAKING_ALWAYS_INLINE
 
 #include <type_traits>
+#include <memory>
 #include <iterator>
 #include <utility>
 #include <atomic>
@@ -112,87 +113,77 @@ namespace daking {
                nullptr
     */
 
-    template <typename Ty, std::size_t ThreadLocalCapacity = 256,
-        std::size_t Align = 64 /* std::hardware_destructive_interference_size */>
-    class MPSC_queue {
-    public:
-        static_assert(std::is_object_v<Ty>, "Ty must be object.");
-		static_assert((ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2.");
-
-        using value_type      = Ty;
-        using size_type       = std::size_t;
-        using pointer         = value_type*;
-        using reference       = value_type&;
-        using const_reference = const value_type&;
-
-        static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
-        static constexpr std::size_t align                 = Align;
-
-    private:
-        struct node {
-            node() {
+    namespace detail {
+        template <typename Queue>
+        struct MPSC_node {
+            MPSC_node() {
                 next_.store(nullptr, std::memory_order_release);
             }
-            ~node() { /* Don't call destuctor of value_ here*/}
+            ~MPSC_node() { /* Don't call destuctor of value_ here*/ }
 
             union {
-                value_type value_;
-                node*      next_chunk_;
+                typename Queue::value_type value_;
+                MPSC_node*                 next_chunk_;
             };
-            std::atomic<node*>  next_;
+            std::atomic<MPSC_node*>  next_;
         };
 
-        struct page {
-            page(node* p = nullptr, page* n = nullptr) : page_(p), next_(n) {}
-            ~page() {
-                delete[] page_;
-                delete next_;
+        template <typename Queue>
+        struct MPSC_page{
+            using size_type = typename Queue::size_type;
+            using Node      = MPSC_node<Queue>;
+            MPSC_page(Node* node, size_type count, MPSC_page* next) : node_(node), count_(count), next_(next) {}
+            ~MPSC_page() = default;
+
+            Node*       node_;
+            size_type   count_;
+            MPSC_page*  next_;
+        };
+
+        template <typename Queue>
+        struct MPSC_chunk_stack {
+            using size_type = typename Queue::size_type;
+            using Node = MPSC_node<Queue>;
+
+            struct Tagged_ptr {
+               Node*     node_ = nullptr;
+               size_type tag_ = 0;
+            };
+
+            MPSC_chunk_stack() = default;
+            ~MPSC_chunk_stack() = default;
+
+            DAKING_ALWAYS_INLINE void Reset() noexcept {
+                top.store(Tagged_ptr{ nullptr, 0 });
             }
 
-            node* page_;
-            page* next_;
-        };
-
-        struct chunk_stack {
-            struct tagged_ptr {
-                node*     node_ = nullptr;
-                size_type tag_  = 0;
-            };
-
-            chunk_stack()  = default;
-            ~chunk_stack() = default;
-
-            DAKING_ALWAYS_INLINE void reset() noexcept {
-                top.store(tagged_ptr{ nullptr, 0 });
-			}
-
-            DAKING_NO_TSAN void push(node* chunk) noexcept /*Pointer Swap*/ {
-                tagged_ptr new_top{ chunk, 0 };
-                tagged_ptr old_top = top.load(std::memory_order_relaxed);
+            DAKING_NO_TSAN void Push(Node* chunk) noexcept /*Pointer Swap*/ {
+                Tagged_ptr new_top{ chunk, 0 };
+                Tagged_ptr old_top = top.load(std::memory_order_relaxed);
                 // If TB read old_top, and TA pop the old_top then
                 do {
                     new_top.node_->next_chunk_ = old_top.node_;
                     // then B will read a invalid value(which is regard as object address at TA)
                     // but B will not pass CAS.
                     // Actually, this is a data race, but CAS protect B form UB. 
-					new_top.tag_ = old_top.tag_ + 1;
+                    new_top.tag_ = old_top.tag_ + 1;
                 } while (!top.compare_exchange_weak(
-                    old_top, new_top,    
-                    std::memory_order_acq_rel, 
+                    old_top, new_top,
+                    std::memory_order_acq_rel,
                     std::memory_order_relaxed
                 ));
             }
 
-            DAKING_NO_TSAN bool try_pop(node*& chunk) noexcept /*Pointer Swap*/ {
-                tagged_ptr old_top = top.load(std::memory_order_relaxed);
-                tagged_ptr new_top{};
+            DAKING_NO_TSAN bool Try_pop(Node*& chunk) noexcept /*Pointer Swap*/ {
+                Tagged_ptr old_top = top.load(std::memory_order_relaxed);
+                Tagged_ptr new_top{};
 
                 do {
                     if (!old_top.node_) {
                         return false;
                     }
                     new_top.node_ = old_top.node_->next_chunk_;
-					new_top.tag_ = old_top.tag_ + 1;
+                    new_top.tag_ = old_top.tag_ + 1;
                     // If TA and TB reach here at the same time
                     // And A pop the chunk successfully, then it will construct object at old_top.node_->next_chunk_, 
                     // so that B will read a invaild value, but this value will not pass the next CAS.(old_top have been updated by A)
@@ -202,20 +193,125 @@ namespace daking {
                     std::memory_order_acq_rel,
                     std::memory_order_acquire
                 ));
-				chunk = old_top.node_;
+                chunk = old_top.node_;
                 return true;
             }
 
-            std::atomic<tagged_ptr> top{};
+            std::atomic<Tagged_ptr> top{};
         };
 
+        template <typename Queue, typename Alloc>
+        struct MPSC_manager : /* CRTP for EBO */
+            public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_node<Queue>>,
+            public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_page<Queue>> {
+            using size_type            = typename Queue::size_type;
+            using Node                 = MPSC_node<Queue>;
+            using Page                 = MPSC_page<Queue>;
+            using Thread_local_pair    = std::pair<Node**, size_type*>;
+            using Thread_local_manager = std::vector<Thread_local_pair, typename std::allocator_traits<Alloc>::template rebind_alloc<Thread_local_pair>>;
+            using Alloc_node           = typename std::allocator_traits<Alloc>::template rebind_alloc<Node>;
+            using Altraits_node        = std::allocator_traits<Alloc_node>;
+            using Alloc_page           = typename std::allocator_traits<Alloc>::template rebind_alloc<Page>;
+            using Altraits_page        = std::allocator_traits<Alloc_page>;
+
+            MPSC_manager(const Alloc& alloc) : Alloc_node(alloc), Alloc_page(alloc) {}
+            ~MPSC_manager() {
+                while (global_page_list_) {
+                    Altraits_node::deallocate(*this, global_page_list_->node_, global_page_list_->count_);
+                    Altraits_page::deallocate(*this, std::exchange(global_page_list_, global_page_list_->next_), 1);
+                }
+
+                // Now all thread_local variables are invalid.
+                for (auto [ptr, size] : global_thread_local_manager_) {
+                    *ptr = nullptr;
+                    *size = 0;
+                }
+
+                global_node_count_.store(0, std::memory_order_release);
+            }
+
+            void Reserve(size_type count) {
+                Node* new_nodes = Altraits_node::allocate(*this, count);
+                Page* new_page = Altraits_page::allocate(*this, 1);
+                Altraits_page::construct(*this, new_page, new_nodes, count, global_page_list_);
+                global_page_list_ = new_page;
+
+                for (size_type i = 0; i < count; i++) {
+                    new_nodes[i].next_ = new_nodes + i + 1;
+                    if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) [[unlikely]] {
+                        // chunk_count = count / ThreadLocalCapacity
+                        new_nodes[i].next_ = nullptr;
+                        std::atomic_thread_fence(std::memory_order_acq_rel);
+                        // mutex don't protect global_chunk_stack_, so we need make a atomice fence
+                        Queue::global_chunk_stack_.Push(&new_nodes[i - Queue::thread_local_capacity + 1]);
+                    }
+                }
+
+                global_node_count_.store(global_node_count_ + count, std::memory_order_release);
+            }
+
+            DAKING_ALWAYS_INLINE void Register(Node** node, size_type* size) {
+                global_thread_local_manager_.emplace_back(node, size);
+            }
+
+            DAKING_ALWAYS_INLINE size_type Node_count() noexcept {
+                return global_node_count_.load(std::memory_order_acquire);
+            }
+
+            Page*                  global_page_list_  = nullptr;
+            std::atomic<size_type> global_node_count_ = 0;
+            Thread_local_manager   global_thread_local_manager_;
+        };
+    }
+
+    template <
+        typename Ty, 
+        std::size_t ThreadLocalCapacity = 256,
+        std::size_t Align               = 64, /* std::hardware_destructive_interference_size */
+        typename Alloc                  = std::allocator<Ty>
+    >
+    class MPSC_queue :  /* CRTP for EBO */ private std::allocator_traits<Alloc>::template rebind_alloc<
+        detail::MPSC_manager<MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>, Alloc>> {
     public:
-        MPSC_queue() {
+        static_assert(std::is_object_v<Ty>, "Ty must be object.");
+		static_assert((ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2.");
+
+        using value_type      = Ty;
+        using allocator_type  = Alloc;
+        using size_type       = typename std::allocator_traits<allocator_type>::size_type;
+        using pointer         = typename std::allocator_traits<allocator_type>::pointer;
+        using reference       = Ty&;
+        using const_reference = const Ty&;
+        
+
+        static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
+        static constexpr std::size_t align                 = Align;
+
+    private:
+        using Node             = detail::MPSC_node<MPSC_queue>;
+        using Page             = detail::MPSC_page<MPSC_queue>;
+        using Chunk_stack      = detail::MPSC_chunk_stack<MPSC_queue>;
+        using Manager          = detail::MPSC_manager<MPSC_queue, Alloc>;
+        using Alloc_manager    = typename std::allocator_traits<allocator_type>::template rebind_alloc<Manager>;
+        using Altraits_manager = std::allocator_traits<Alloc_manager>;
+        using Alloc_node       = typename Manager::Alloc_node;
+        using Altraits_node    = typename Manager::Altraits_node;
+        using Alloc_page       = typename Manager::Alloc_page;
+        using Altraits_page    = typename Manager::Altraits_page;
+        friend Manager;
+        friend Altraits_node;
+        friend Altraits_page;
+
+    public:
+        MPSC_queue(const allocator_type& alloc = allocator_type()) 
+            : Alloc_manager(alloc) /* Alloc<Ty> -> Alloc<Manager>, which means Alloc should have a template constructor */{
             global_instance_count_++;
-            Register_global_manager();
+            Register_global_manager(alloc);
             Initial();
         }
-        explicit MPSC_queue(size_type initial_global_chunk_count) : MPSC_queue() {
+
+        explicit MPSC_queue(size_type initial_global_chunk_count, const allocator_type& alloc = allocator_type()) 
+            : MPSC_queue(alloc) {
             reserve_global_chunk(initial_global_chunk_count);
         }
 
@@ -238,12 +334,12 @@ namespace daking {
 
         template <typename...Args>
         DAKING_ALWAYS_INLINE void emplace(Args&&... args) {
-            node* new_node = Allocate();
-            Construct_at(std::addressof(new_node->value_), std::forward<Args>(args)...);
+            Node* new_node = Allocate();
+            Altraits_node::construct(Get_manager(), std::addressof(new_node->value_), std::forward<Args>(args)...);
 
-            node* old_head = head_.exchange(new_node, std::memory_order_acq_rel);
+            Node* old_head = head_.exchange(new_node, std::memory_order_acq_rel);
 #if DAKING_HAS_CXX20_OR_ABOVE
-            node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
+            Node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
 #endif 
             old_head->next_.store(new_node, std::memory_order_release);
 #if DAKING_HAS_CXX20_OR_ABOVE
@@ -264,19 +360,19 @@ namespace daking {
         DAKING_ALWAYS_INLINE void enqueue_bulk(const_reference value, size_type n) {
             // N times thread_local operation, One time CAS operation.
             // So it is more efficient than N times enqueue.
-            node* first_new_node = Allocate();
-            node* prev_node = first_new_node;
-            Construct_at(std::addressof(first_new_node->value_), value);
+            Node* first_new_node = Allocate();
+            Node* prev_node = first_new_node;
+            Altraits_node::construct(Get_manager(), std::addressof(first_new_node->value_), value);
             for (size_type i = 1; i < n; i++) {
-                node* new_node = Allocate();
-                Construct_at(std::addressof(new_node->value_), value);
+                Node* new_node = Allocate();
+                Altraits_node::construct(Get_manager(), std::addressof(new_node->value_), value);
                 prev_node->next_.store(new_node, std::memory_order_relaxed);
                 prev_node = new_node;
             }
             prev_node->next_.store(nullptr, std::memory_order_relaxed);
-            node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
+            Node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
 #if DAKING_HAS_CXX20_OR_ABOVE
-            node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
+            Node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
 #endif 
             old_head->next_.store(first_new_node, std::memory_order_release);
 #if DAKING_HAS_CXX20_OR_ABOVE
@@ -295,19 +391,19 @@ namespace daking {
             static_assert(std::is_same_v<typename std::iterator_traits<InputIt>::value_type, value_type>,
                 "The value type of iterator must be same as MPSC_queue::value_type.");
 
-            node* first_new_node = Allocate();
-            node* prev_node = first_new_node;
-            Construct_at(std::addressof(first_new_node->value_), *it++);
+            Node* first_new_node = Allocate();
+            Node* prev_node = first_new_node;
+            Altraits_node::construct(Get_manager(), std::addressof(first_new_node->value_), *it++);
             for (size_type i = 1; i < n; i++) {
-                node* new_node = Allocate();
-                Construct_at(std::addressof(new_node->value_), *it++);
+                Node* new_node = Allocate();
+                Altraits_node::construct(Get_manager(), std::addressof(new_node->value_), *it++);
                 prev_node->next_.store(new_node,  std::memory_order_relaxed);
                 prev_node = new_node;
             }
             prev_node->next_.store(nullptr, std::memory_order_relaxed);
-			node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
+            Node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
 #if DAKING_HAS_CXX20_OR_ABOVE
-            node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
+            Node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
 #endif 
 			old_head->next_.store(first_new_node, std::memory_order_release);
 #if DAKING_HAS_CXX20_OR_ABOVE
@@ -329,10 +425,10 @@ namespace daking {
                 std::is_nothrow_destructible_v<value_type>) {
             static_assert(std::is_assignable_v<T&, value_type&&>);
 
-			node* next = tail_->next_.load(std::memory_order_acquire);
+            Node* next = tail_->next_.load(std::memory_order_acquire);
             if (next) [[likely]]{
                 value = std::move(next->value_);
-                Destruct_at(std::addressof(next->value_));
+                Altraits_node::destroy(Get_manager(), std::addressof(next->value_));
                 Deallocate(std::exchange(tail_, next));
                 return true;
             }
@@ -418,166 +514,132 @@ namespace daking {
 		}
 
         DAKING_ALWAYS_INLINE static size_type global_node_size_apprx() noexcept {
-            return global_node_count_.load(std::memory_order_acquire);
+            return global_manager_->Node_count();
         }
 
         DAKING_ALWAYS_INLINE static void reserve_global_chunk(size_type chunk_count){
             Reserve_global_external(chunk_count);
         }
 
+        DAKING_ALWAYS_INLINE allocator_type get_allocator() noexcept {
+            return allocator_type(*this);
+        }
+
     private:
         DAKING_ALWAYS_INLINE void Initial() {
-            node* dummy = Allocate();
-            head_.store(dummy, std::memory_order_release);
+            Node* dummy = Allocate();
             tail_ = dummy;
-        }
-        
-        template <typename...Args> DAKING_ALWAYS_INLINE 
-        void Construct_at(pointer address, Args&&...args) noexcept(std::is_nothrow_constructible_v<value_type, Args...>) {
-            new (address) value_type(std::forward<Args>(args)...);
+            head_.store(dummy, std::memory_order_release);
         }
 
-        DAKING_ALWAYS_INLINE void Destruct_at(pointer address) noexcept(std::is_nothrow_destructible_v<value_type>) {
-            address->~value_type();
-        }
-
-        DAKING_ALWAYS_INLINE node* Allocate() {
+        DAKING_ALWAYS_INLINE Node* Allocate() {
             if (!thread_local_node_list_) [[unlikely]] {
-                while (!global_chunk_stack_.try_pop(thread_local_node_list_)) {
+                while (!global_chunk_stack_.Try_pop(thread_local_node_list_)) {
                     Reserve_global_internal();
 				}
             }
-            node* res = std::exchange(thread_local_node_list_, thread_local_node_list_->next_);
+            Node* res = std::exchange(thread_local_node_list_, thread_local_node_list_->next_);
             res->next_.store(nullptr, std::memory_order_relaxed);
             return res;
         }
 
-        DAKING_ALWAYS_INLINE void Deallocate(node* nd) noexcept {
+        DAKING_ALWAYS_INLINE void Deallocate(Node* nd) noexcept {
             nd->next_ = thread_local_node_list_;
             thread_local_node_list_ = nd;
             if (++thread_local_node_count_ >= thread_local_capacity) [[unlikely]] {
-				global_chunk_stack_.push(thread_local_node_list_);
+				global_chunk_stack_.Push(thread_local_node_list_);
                 thread_local_node_list_ = nullptr;
                 thread_local_node_count_ = 0;
             }
         }
 
-        static void Register_global_manager() noexcept {
-            std::lock_guard<std::mutex> lock(global_mutex_);
-            if (!global_thread_local_manager_) {
-                global_thread_local_manager_ = new std::vector<std::pair<node**, size_type*>>();
-            }
-            global_thread_local_manager_->emplace_back(&thread_local_node_list_, &thread_local_node_count_);
+        DAKING_ALWAYS_INLINE DAKING_NO_TSAN 
+            // If allocator is stateless, there is no data race.
+            // But if it has stateful member: construct/destroy, you should protect these two functions by yourself,
+            // and other funstions are protected by daking.
+        Manager& Get_manager() noexcept {
+            return *global_manager_;
         }
 
-        static void Reserve_global_external(size_type chunk_count) {
+        DAKING_ALWAYS_INLINE void Register_global_manager(const allocator_type& alloc) noexcept {
             std::lock_guard<std::mutex> lock(global_mutex_);
-            size_type global_count = global_node_count_.load(std::memory_order_relaxed);
-            if (global_count / thread_local_capacity >= chunk_count) {
+            if (!global_manager_) {
+                Manager* manager = Altraits_manager::allocate(*this, 1);
+                Altraits_manager::construct(*this, manager, get_allocator());
+                global_manager_ = manager;
+            }
+            global_manager_->Register(&thread_local_node_list_, &thread_local_node_count_);
+        }
+
+        DAKING_ALWAYS_INLINE static void Reserve_global_external(size_type chunk_count) {
+            size_type global_node_count = global_manager_->Node_count();
+            if (global_node_count / thread_local_capacity >= chunk_count) {
                 return;
             }
-            size_type count = (chunk_count - global_node_count_ / thread_local_capacity) * thread_local_capacity;
-            node* new_nodes = new node[count];
-            global_page_list_ = new page(new_nodes, global_page_list_);
-
-            for (size_type i = 0; i < count; i++) {
-                new_nodes[i].next_ = new_nodes + i + 1;
-                if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {
-                    // chunk_count = count / ThreadLocalCapacity
-                    new_nodes[i].next_ .store(nullptr, std::memory_order_release);
-                    // mutex don't protect global_chunk_stack_, so we need release
-                    global_chunk_stack_.push(&new_nodes[i - thread_local_capacity + 1]);
-                }
+            std::lock_guard<std::mutex> lock(global_mutex_);
+            global_node_count = global_manager_->Node_count();
+            if (global_node_count / thread_local_capacity >= chunk_count) {
+                return;
             }
 
-            global_node_count_.store(global_count + count, std::memory_order_release);
+            size_type count = (chunk_count - global_node_count / thread_local_capacity) * thread_local_capacity;
+            global_manager_->Reserve(count);
         }
 
-        static void Reserve_global_internal() {
+        DAKING_ALWAYS_INLINE static void Reserve_global_internal() {
 			std::lock_guard<std::mutex> lock(global_mutex_);
             if (global_chunk_stack_.top.load(std::memory_order_acquire).node_) {
                 // if anyone have already allocate chunks, I return.
                 return;
 			}
-            size_type global_count = global_node_count_.load(std::memory_order_relaxed);
-            size_type count = std::max(thread_local_capacity, global_count);
-            node* new_nodes = new node[count];
-            global_page_list_ = new page(new_nodes, global_page_list_);
-            for (size_type i = 0; i < count; i++) {
-                new_nodes[i].next_ = new_nodes + i + 1;
-                if ((i & (thread_local_capacity - 1)) == thread_local_capacity - 1) {
-                    // chunk_count = count / ThreadLocalCapacity
-                    new_nodes[i].next_ = nullptr;
-                    std::atomic_thread_fence(std::memory_order_acq_rel);
-                    // mutex don't protect global_chunk_stack_, so we need make a atomice fence
-                    global_chunk_stack_.push(&new_nodes[i - thread_local_capacity + 1]);
-				}
-            }
 
-            global_node_count_.store(global_count + count, std::memory_order_release);
+            global_manager_->Reserve(std::max(thread_local_capacity, global_manager_->Node_count()));
         }
 
-        static void Free_global() {
+        DAKING_ALWAYS_INLINE void Free_global() {
             /* Already locked */
-            delete std::exchange(global_page_list_, nullptr);
-
-            // Now all thread_local variables are invalid.
-            for (auto [ptr, size] : *global_thread_local_manager_) {
-                *ptr = nullptr;
-                *size = 0;
-            }
-            delete std::exchange(global_thread_local_manager_, nullptr);
-
-            global_node_count_.store(0, std::memory_order_release);
-            global_chunk_stack_.reset();
+            global_chunk_stack_.Reset();
+            Altraits_manager::destroy(*this, global_manager_);
+            Altraits_manager::deallocate(*this, std::exchange(global_manager_, nullptr), 1);
         }
 
         /* Global LockFree*/
-        static chunk_stack                                 global_chunk_stack_;
-        static std::atomic_size_t                          global_instance_count_;
+        static Chunk_stack                global_chunk_stack_;
+        static std::atomic<size_type>     global_instance_count_;
 
         /* Global Mutex*/ 
-        static std::mutex                                  global_mutex_;
-        static std::atomic_size_t                          global_node_count_;
-        static page*                                       global_page_list_;
-        static std::vector<std::pair<node**, size_type*>>* global_thread_local_manager_;
+        static std::mutex                 global_mutex_;
+        static Manager*                   global_manager_;
 
         /* ThreadLocal*/
-        thread_local static node*         thread_local_node_list_;
+        thread_local static Node*         thread_local_node_list_;
         thread_local static size_type     thread_local_node_count_;
 
         /* MPSC */
-        alignas(align) std::atomic<node*> head_;
-        alignas(align) node*              tail_;
+        alignas(align) std::atomic<Node*> head_;
+        alignas(align) Node*              tail_;
     };
 
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node*
-        MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_list_ = nullptr;
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
+    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::Node*
+        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::thread_local_node_list_ = nullptr;
 
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    thread_local std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::thread_local_node_count_ = 0;
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
+    thread_local std::size_t MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::thread_local_node_count_ = 0;
 
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    alignas(Align) typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::chunk_stack
-        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_chunk_stack_{};
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
+    alignas(Align) typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::Chunk_stack
+        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_chunk_stack_{};
 
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    alignas(Align) std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_instance_count_ = 0;
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
+    alignas(Align) std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_instance_count_ = 0;
 
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_mutex_{};
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
+    std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_mutex_{};
 
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    std::vector<std::pair<typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::node**, std::size_t*>>*
-        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_thread_local_manager_{};
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    std::atomic_size_t MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_node_count_ = 0;
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align>
-    typename MPSC_queue<Ty, ThreadLocalCapacity, Align>::page*
-        MPSC_queue<Ty, ThreadLocalCapacity, Align>::global_page_list_;
+    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
+    typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::Manager*
+        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_manager_ = nullptr;
 }
 
 #endif // !DAKING_MPSC_QUEUE_HPP
