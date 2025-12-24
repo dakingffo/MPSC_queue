@@ -265,7 +265,7 @@ namespace daking {
     }
 
     template <
-        typename Ty, 
+        typename Ty,                          
         std::size_t ThreadLocalCapacity = 256,
         std::size_t Align               = 64, /* std::hardware_destructive_interference_size */
         typename Alloc                  = std::allocator<Ty>
@@ -282,7 +282,6 @@ namespace daking {
         using pointer         = typename std::allocator_traits<allocator_type>::pointer;
         using reference       = Ty&;
         using const_reference = const Ty&;
-        
 
         static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
         static constexpr std::size_t align                 = Align;
@@ -298,6 +297,15 @@ namespace daking {
         using Altraits_node    = typename Manager::Altraits_node;
         using Alloc_page       = typename Manager::Alloc_page;
         using Altraits_page    = typename Manager::Altraits_page;
+
+        static_assert(
+            std::is_convertible_v<Alloc_manager, allocator_type>   &&   // for get_allocator()
+            std::is_constructible_v<Alloc_manager, allocator_type> &&   // for constructor of MPSC_queue
+            std::is_constructible_v<Alloc_node, allocator_type>    &&   // for constructor of MPSC_manager
+            std::is_constructible_v<Alloc_page, allocator_type>,        // for constructor of MPSC_manager
+            "Alloc should have a tempalte constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
+        );
+
         friend Manager;
         friend Altraits_node;
         friend Altraits_page;
@@ -437,14 +445,14 @@ namespace daking {
             }
         }
 
-        template <typename ForwardIt>
-        DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(ForwardIt it, size_type n) 
+        template <typename OutputIt>
+        DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(OutputIt it, size_type n) 
             noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&> && 
                 std::is_nothrow_destructible_v<value_type>) {
             static_assert(
-                std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<ForwardIt>::iterator_category> &&
-                std::is_assignable_v<typename std::iterator_traits<ForwardIt>::reference, value_type&&> ||
-                std::is_same_v<typename std::iterator_traits<ForwardIt>::iterator_category, std::output_iterator_tag>,
+                std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<OutputIt>::iterator_category> &&
+                std::is_assignable_v<typename std::iterator_traits<OutputIt>::reference, value_type&&> ||
+                std::is_same_v<typename std::iterator_traits<OutputIt>::iterator_category, std::output_iterator_tag>,
                 "Iterator must be at least output iterator or forward iterator.");
 
 			size_type count = 0;
@@ -565,7 +573,7 @@ namespace daking {
             std::lock_guard<std::mutex> lock(global_mutex_);
             if (!global_manager_) {
                 Manager* manager = Altraits_manager::allocate(*this, 1);
-                Altraits_manager::construct(*this, manager, get_allocator());
+                Altraits_manager::construct(*this, manager, alloc);
                 global_manager_ = manager;
             }
             global_manager_->Register(&thread_local_node_list_, &thread_local_node_count_);
