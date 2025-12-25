@@ -521,16 +521,16 @@ namespace daking {
             return tail_->next_.load(std::memory_order_acquire) == nullptr;
 		}
 
-        DAKING_ALWAYS_INLINE static size_type global_node_size_apprx() noexcept {
-            return global_manager_->Node_count();
-        }
-
-        DAKING_ALWAYS_INLINE static void reserve_global_chunk(size_type chunk_count){
-            Reserve_global_external(chunk_count);
-        }
-
         DAKING_ALWAYS_INLINE allocator_type get_allocator() noexcept {
             return allocator_type(*this);
+        }
+
+        DAKING_ALWAYS_INLINE static size_type global_node_size_apprx() noexcept {
+            return global_manager_ ? global_manager_->Node_count() : 0;
+        }
+
+        DAKING_ALWAYS_INLINE static bool reserve_global_chunk(size_type chunk_count){
+			return global_manager_ ? Reserve_global_external(chunk_count) : false;
         }
 
     private:
@@ -579,19 +579,20 @@ namespace daking {
             global_manager_->Register(&thread_local_node_list_, &thread_local_node_count_);
         }
 
-        DAKING_ALWAYS_INLINE static void Reserve_global_external(size_type chunk_count) {
+        DAKING_ALWAYS_INLINE static bool Reserve_global_external(size_type chunk_count) {
             size_type global_node_count = global_manager_->Node_count();
             if (global_node_count / thread_local_capacity >= chunk_count) {
-                return;
+                return false;
             }
             std::lock_guard<std::mutex> lock(global_mutex_);
             global_node_count = global_manager_->Node_count();
             if (global_node_count / thread_local_capacity >= chunk_count) {
-                return;
+                return false;
             }
 
             size_type count = (chunk_count - global_node_count / thread_local_capacity) * thread_local_capacity;
             global_manager_->Reserve(count);
+			return true;
         }
 
         DAKING_ALWAYS_INLINE static void Reserve_global_internal() {

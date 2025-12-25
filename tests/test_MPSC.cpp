@@ -84,8 +84,8 @@ TEST(MPSCQueueMemoryTest, GlobalResourceSharingAndDestruction) {
 
 TEST(MPSCQueueMemoryTest, ReserveGlobalChunk) {
 	using Q = MPSC_queue<long, 64>;
-	size_t initial_size = Q::global_node_size_apprx(); // Initial value is 64
-
+	size_t initial_size = Q::global_node_size_apprx(); // Initial value is 0
+	Q q; // Create an instance to register global manager
 	Q::reserve_global_chunk(10); // Reserve 10 * 64 nodes
 	size_t reserved_size = Q::global_node_size_apprx();
 	EXPECT_GE(reserved_size, initial_size + 10 * 64);
@@ -198,9 +198,58 @@ TEST(MPSCQueueConcurrentTest, MultipleProducersSingleConsumer_Bulk) {
 	EXPECT_TRUE(queue.empty());
 }
 
+// -------------------------------------------------------------------------
+// IV. Custom Allocator Tests
+// -------------------------------------------------------------------------
+
+struct Counter {
+	static std::size_t alloc_count;
+	static std::size_t dealloc_count;
+};
+
+std::size_t Counter::alloc_count = 0;
+std::size_t Counter::dealloc_count = 0;
+
+template <typename T>
+struct CountingAllocator : Counter {
+	using value_type = T;
+	CountingAllocator() = default;
+	template <typename U>
+	CountingAllocator(const CountingAllocator<U>&) {}
+	// MPSC will protect allocate/deallocate with mutex.
+	T* allocate(std::size_t n) {
+		alloc_count += n;
+		return static_cast<T*>(::operator new(n * sizeof(T)));
+	}
+	void deallocate(T* p, std::size_t n) noexcept {
+		dealloc_count += n;
+		::operator delete(p);
+	}
+};
+
+TEST(MPSCQueueAllocatorTest, CustomAllocatorUsage) {
+	using AllocQueue = MPSC_queue<int, 256, 64, CountingAllocator<int>>;
+	AllocQueue* queue = new AllocQueue();
+	const size_t n = 1000;
+	for (size_t i = 0; i < n; ++i) {
+		queue->enqueue(i);
+	}
+
+	int result;
+	for (size_t i = 0; i < n; ++i) {
+		EXPECT_TRUE(queue->try_dequeue(result));
+		EXPECT_EQ(result, i);
+	}
+	EXPECT_TRUE(queue->empty());
+	// Check that allocations and deallocations occurred
+	EXPECT_GT(CountingAllocator<int>::alloc_count, 0);
+	delete queue;
+	EXPECT_GT(CountingAllocator<int>::dealloc_count, 0);
+	EXPECT_EQ(CountingAllocator<int>::alloc_count, CountingAllocator<int>::dealloc_count);
+}
 
 // -------------------------------------------------------------------------
-// V. C++20 Blocking Operation Tests
+// VI. C++20 Blocking Operation Tests
 // -------------------------------------------------------------------------
 
 #if DAKING_HAS_CXX20_OR_ABOVE
