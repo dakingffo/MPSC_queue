@@ -234,11 +234,16 @@ However, using these blocking methods may lead to performance degradation when t
 ### Customizable Template Parameters and Memory Operations
 
 ```c++
-daking::MPSC_queue<int, 1024, 128> queue;
+daking::MPSC_queue<int, 1024, 128, std::allocator<int>> queue;
 // ThreadLocalCapacity = 1024 (Capacity of the thread-local node pool)
 // Internal head/tail Alignment = 128 (Alignment for the internal head/tail pointers)
+// Allocator = std::allocator<int> (Custom allocator for node memory management), 
+// Allocator should have a template constructor like Alloc(const Alloc<U>& other) to transfer between different types.
+// Allocator::allocate/deallocate are protected by an internal global mutex. So you don't need to ensure they are thread safe.
+// But if Allocator::constructed/destroy is defined and they are stateful, you should ensure thread safe by yourself.
 
 daking::MPSC_queue<int, 512>::reserve_global_chunk(5);
+// reserve_global_chunk(n) should be called before any instance of daking::MPSC_queue<int, 512> is constructed.
 // Allocates five chunks into the global pool, which amounts to 5 * 512 nodes. 
 // No allocation will occur if the parameter is less than the number of chunks already in the global pool.
 

@@ -230,10 +230,13 @@ size_t count = queue.try_dequeue_bulk(std::back_inserter(results), max_fetch);
 ### 可定制模版参数和内存操作
 
 ```c++
-daking::MPSC_queue<int, 1024, 128> queue;
+daking::MPSC_queue<int, 1024, 128, std::allocator<int>> queue;
 // ThreadLocalCapacity = 1024 (线程本地容量)
 // Internal head/tail Alignment = 128 (内部头尾对齐方式)
-
+// Allocator = std::allocator<int> (分配器类型)
+// Allocator 需要有一个模版构造函数，如 Alloc(const Alloc<U>& other)，以便在不同类型之间转换。
+// Allocator::allocate/deallocate 由内部的全局互斥锁保护，因此你不需要确保它们是线程安全的。
+// 但是如果定义了 Allocator::construct/destroy 并且它们是有状态的，你需要自己确保线程安全。
 daking::MPSC_queue<int, 512>::reserve_global_chunk(5);
 // 向全局池分配五个块，也就是5 * 512个节点，如果如果参数小于全局池已有的节点数，则不会分配。
 std::cout << daking::MPSC_queue<int, 512>::global_node_size_apprx();
