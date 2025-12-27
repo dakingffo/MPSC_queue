@@ -346,14 +346,9 @@ namespace daking {
             Altraits_node::construct(Get_manager(), std::addressof(new_node->value_), std::forward<Args>(args)...);
 
             Node* old_head = head_.exchange(new_node, std::memory_order_acq_rel);
-#if DAKING_HAS_CXX20_OR_ABOVE
-            Node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
-#endif 
             old_head->next_.store(new_node, std::memory_order_release);
 #if DAKING_HAS_CXX20_OR_ABOVE
-            if (old_head_next == nullptr) [[unlikely]] {
-                old_head->next_.notify_one();
-            }
+            old_head->next_.notify_one();
 #endif 
         }
 
@@ -377,16 +372,10 @@ namespace daking {
                 prev_node->next_.store(new_node, std::memory_order_relaxed);
                 prev_node = new_node;
             }
-            prev_node->next_.store(nullptr, std::memory_order_relaxed);
             Node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
-#if DAKING_HAS_CXX20_OR_ABOVE
-            Node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
-#endif 
             old_head->next_.store(first_new_node, std::memory_order_release);
 #if DAKING_HAS_CXX20_OR_ABOVE
-            if (old_head_next == nullptr) [[unlikely]] {
-                old_head->next_.notify_one();
-            }
+            old_head->next_.notify_one();
 #endif
         }
 
@@ -401,23 +390,19 @@ namespace daking {
 
             Node* first_new_node = Allocate();
             Node* prev_node = first_new_node;
-            Altraits_node::construct(Get_manager(), std::addressof(first_new_node->value_), *it++);
+            Altraits_node::construct(Get_manager(), std::addressof(first_new_node->value_), *it);
+            ++it;
             for (size_type i = 1; i < n; i++) {
                 Node* new_node = Allocate();
-                Altraits_node::construct(Get_manager(), std::addressof(new_node->value_), *it++);
+                Altraits_node::construct(Get_manager(), std::addressof(new_node->value_), *it);
                 prev_node->next_.store(new_node,  std::memory_order_relaxed);
                 prev_node = new_node;
+                ++it;
             }
-            prev_node->next_.store(nullptr, std::memory_order_relaxed);
             Node* old_head = head_.exchange(prev_node, std::memory_order_acq_rel);
-#if DAKING_HAS_CXX20_OR_ABOVE
-            Node* old_head_next = old_head->next_.load(std::memory_order_relaxed);
-#endif 
 			old_head->next_.store(first_new_node, std::memory_order_release);
 #if DAKING_HAS_CXX20_OR_ABOVE
-            if (old_head_next == nullptr) [[unlikely]] {
-                old_head->next_.notify_one();
-            }
+            old_head->next_.notify_one();
 #endif 
 		}
 
@@ -448,7 +433,7 @@ namespace daking {
         template <typename OutputIt>
         DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(OutputIt it, size_type n) 
             noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&> && 
-                std::is_nothrow_destructible_v<value_type>) {
+                std::is_nothrow_destructible_v<value_type> && noexcept(++it)) {
             static_assert(
                 std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<OutputIt>::iterator_category> &&
                 std::is_assignable_v<typename std::iterator_traits<OutputIt>::reference, value_type&&> ||
@@ -457,8 +442,8 @@ namespace daking {
 
 			size_type count = 0;
             while (count < n && try_dequeue(*it)) {
-                count++;
-                it++;
+                ++count;
+                ++it;
             }
 			return count;
         }
@@ -467,7 +452,7 @@ namespace daking {
             typename std::iterator_traits<ForwardIt>::iterator_category>, int> = 0>
         DAKING_ALWAYS_INLINE size_type try_dequeue_bulk(ForwardIt begin, ForwardIt end)
             noexcept(std::is_nothrow_assignable_v<decltype(*begin), value_type&&> &&
-                std::is_nothrow_destructible_v<value_type>) {
+                std::is_nothrow_destructible_v<value_type> && noexcept(++begin)) {
             return try_dequeue_bulk(begin, (size_type)std::distance(begin, end));
         }
 
@@ -489,7 +474,7 @@ namespace daking {
 		template <typename OutputIt>
         void dequeue_bulk(OutputIt it, size_type n)
             noexcept(std::is_nothrow_assignable_v<decltype(*it), value_type&&> &&
-                std::is_nothrow_destructible_v<value_type>) {
+                std::is_nothrow_destructible_v<value_type> && noexcept(++it)) {
             static_assert(
                 std::is_base_of_v<std::forward_iterator_tag, typename std::iterator_traits<OutputIt>::iterator_category> &&
                 std::is_assignable_v<typename std::iterator_traits<OutputIt>::reference, value_type> ||
@@ -499,8 +484,8 @@ namespace daking {
             size_type count = 0;
             while (count < n) {
                 if (try_dequeue(*it)) {
-                    count++;
-                    it++;
+                    ++count;
+                    ++it;
                 }
                 else {
                     tail_->next_.wait(nullptr, std::memory_order_acquire);
@@ -512,7 +497,7 @@ namespace daking {
             typename std::iterator_traits<ForwardIt>::iterator_category>, int> = 0>
         DAKING_ALWAYS_INLINE void dequeue_bulk(ForwardIt begin, ForwardIt end)
             noexcept(std::is_nothrow_assignable_v<decltype(*begin), value_type&&> &&
-            std::is_nothrow_destructible_v<value_type>) {
+                std::is_nothrow_destructible_v<value_type> && noexcept(++begin)) {
             dequeue_bulk(begin, (size_type)std::distance(begin, end));
         }
 #endif 
