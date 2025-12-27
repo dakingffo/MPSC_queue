@@ -110,3 +110,40 @@ BENCHMARK(BM_MPSC_PureEnqueueLatency)->Arg(1)->Arg(2)->Arg(4)->Arg(8)->Arg(16)->
 BENCHMARK(BM_MPSC_PureDequeueLatency)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_MAIN();
+
+/*
+daking:
+Run on (16 X 3992 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x8)
+  L1 Instruction 32 KiB (x8)
+  L2 Unified 1024 KiB (x8)
+  L3 Unified 16384 KiB (x1)
+----------------------------------------------------------------------------------------
+Benchmark                              Time             CPU   Iterations UserCounters...
+----------------------------------------------------------------------------------------
+BM_MPSC_PureEnqueueLatency/1       0.028 us        0.027 us     25077890 P99.9_ns=80.1603 P99_ns=40.0802
+BM_MPSC_PureEnqueueLatency/2       0.071 us        0.066 us     10681086 P99.9_ns=190.381 P99_ns=100.2
+BM_MPSC_PureEnqueueLatency/4       0.085 us        0.079 us      8979347 P99.9_ns=300.601 P99_ns=120.24
+BM_MPSC_PureEnqueueLatency/8       0.180 us        0.140 us      5931389 P99.9_ns=400.802 P99_ns=250.501
+BM_MPSC_PureEnqueueLatency/16      0.618 us        0.196 us     11219862 P99.9_ns=561.373 P99_ns=340.681
+BM_MPSC_PureDequeueLatency          21.9 us         20.3 us        34313 P99.9_ns=20.0401 P99_ns=10.02
+
+moodycamel:  
+moodycamel ConcurrentQueue is a MPMC queue, so this comparion is unfair.
+Run on (16 X 3992 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x8)
+  L1 Instruction 32 KiB (x8)
+  L2 Unified 1024 KiB (x8)
+  L3 Unified 16384 KiB (x1)
+  ----------------------------------------------------------------------------------------
+Benchmark                              Time             CPU   Iterations UserCounters...
+----------------------------------------------------------------------------------------
+BM_MPSC_PureEnqueueLatency/1       0.043 us        0.043 us     15210240 P99.9_ns=340.681 P99_ns=90.1804
+BM_MPSC_PureEnqueueLatency/2       0.028 us        0.028 us     23881411 P99.9_ns=1.81438k P99_ns=30.0601
+BM_MPSC_PureEnqueueLatency/4       0.028 us        0.028 us     25712723 P99.9_ns=1.86448k P99_ns=20.0401
+BM_MPSC_PureEnqueueLatency/8       0.132 us        0.121 us     10000000 P99.9_ns=7.03783k P99_ns=190.381
+BM_MPSC_PureEnqueueLatency/16      0.736 us        0.328 us      2836924 P99.9_ns=11.3985k P99_ns=300.601
+BM_MPSC_PureDequeueLatency          25.4 us         23.5 us        28047 P99.9_ns=20.0401 P99_ns=20.0401
+*/
