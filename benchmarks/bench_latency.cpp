@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <cstdio>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
@@ -29,7 +30,8 @@ void pin_thread(int cpu_id) {
 }
 
 
-const double CYCLES_PER_NS = 3.992; // My CPU
+const double CYCLES_PER_NS    = 3.992; // My CPU
+const bool   OUTPUT_DATA_FILE = false;  // Get hdr file
 // using TestQueue = moodycamel::ConcurrentQueue<int>;
 using TestQueue = daking::MPSC_queue<int>;
 
@@ -75,6 +77,14 @@ static void BM_MPSC_PureEnqueueLatency(benchmark::State& state) {
     for (auto& t : other_producers) t.join();
     consumer.join();
 
+    if (OUTPUT_DATA_FILE) {
+        FILE* fp = fopen("mpsc_pure_enqueue_latency_dist.hgrm", "w");
+        if (fp) {
+            hdr_percentiles_print(hist, fp, 5, 1.0, CLASSIC); 
+            fclose(fp);
+        }
+    }
+
     state.counters["P99_ns"] = hdr_value_at_percentile(hist, 99.0) / CYCLES_PER_NS;
     state.counters["P99.9_ns"] = hdr_value_at_percentile(hist, 99.9) / CYCLES_PER_NS;
     hdr_close(hist);
@@ -98,6 +108,14 @@ static void BM_MPSC_PureDequeueLatency(benchmark::State& state) {
                 uint64_t end = __rdtsc();
                 hdr_record_value(hist, end - start);
             }
+        }
+    }
+
+    if (OUTPUT_DATA_FILE) {
+        FILE* fp = fopen("mpsc_pure_dequeue_latency_dist.hgrm", "w");
+        if (fp) {
+            hdr_percentiles_print(hist, fp, 5, 1.0, CLASSIC); 
+            fclose(fp);
         }
     }
 

@@ -157,7 +157,7 @@ namespace daking {
                 top.store(Tagged_ptr{ nullptr, 0 });
             }
 
-            DAKING_NO_TSAN void Push(Node* chunk) noexcept /*Pointer Swap*/ {
+            DAKING_NO_TSAN void Push(Node* chunk) noexcept /* Pointer Swap */ {
                 Tagged_ptr new_top{ chunk, 0 };
                 Tagged_ptr old_top = top.load(std::memory_order_relaxed);
                 // If TB read old_top, and TA pop the old_top then
@@ -174,8 +174,8 @@ namespace daking {
                 ));
             }
 
-            DAKING_NO_TSAN bool Try_pop(Node*& chunk) noexcept /*Pointer Swap*/ {
-                Tagged_ptr old_top = top.load(std::memory_order_relaxed);
+            DAKING_NO_TSAN bool Try_pop(Node*& chunk) noexcept /* Pointer Swap */ {
+                Tagged_ptr old_top = top.load(std::memory_order_acquire);
                 Tagged_ptr new_top{};
 
                 do {
