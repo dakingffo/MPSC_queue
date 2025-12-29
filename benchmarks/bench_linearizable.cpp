@@ -6,7 +6,7 @@
 #include <cassert>
 #include <iostream>
 
-#ifdef DAKING_HAS_CXX20_OR_ABOVE
+#if DAKING_HAS_CXX20_OR_ABOVE
 
 struct Message {
     int producer_id;
