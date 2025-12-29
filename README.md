@@ -158,6 +158,7 @@ This scenario tests the throughput when producers use the `enqueue_bulk` interfa
 
 
 **Part IV: Enqueue/Dequeue Latency**
+
 (Based on HdrHistogram, Test on Linux)
 We get below performance：
 `Enqueue`comparison：

@@ -157,6 +157,7 @@ Compiler: MSVC -O2
 | moodycamel | 16 | 1 | 43.4848 | 16P时无明显批量优势 |
 
 **第四部分：Enqueue/Dequeue Latency**
+
 (此部分基于HdrHistogram，在Linux平台测试)
 我们得到了以下延迟表现：
 `Enqueue`对比：
