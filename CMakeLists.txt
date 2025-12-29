@@ -35,6 +35,7 @@ FetchContent_Declare(
 )
 set(HDR_HISTOGRAM_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(HDR_HISTOGRAM_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(HDR_LOG_REQUIRED "DISABLED")
 FetchContent_MakeAvailable(hdrhistogram)
 
 find_package(Threads REQUIRED)

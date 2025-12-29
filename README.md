@@ -156,6 +156,18 @@ This scenario tests the throughput when producers use the `enqueue_bulk` interfa
 | **moodycamel** | **2** | **1** | **68.9161** | **Best performance in this section (P=2)** | |
 | moodycamel | 16 | 1 | 43.4848 | No bulk advantage at 16P |
 
+
+**Part IV: Enqueue/Dequeue Latency**
+(Based on HdrHistogram, Test on Linux)
+We get below performance：
+`Enqueue`comparison：
+![P99.9 Enqueue](./P99.9%20Enqueue.png "P99.9 Enqueue Comparison")
+![P99.99999 Enqueue](./P99.99999%20Enqueue.png "P99.99999 Enqueue Comparison")
+`daking Dequeue(try_dequeue)`：
+![daking Dequeue](./daking_dequeue_latency.png "daking Dequeue")
+`moodycamel Dequeue(try_dequeue)`：
+![moodycamel Dequeue](./moodycamel_dequeue_latency.png "moodycamel Dequeue")
+
 ### 3. Conclusion
 
 1.  **Elastic Recovery: Performance Guarantee under Uneven Load**
@@ -166,6 +178,9 @@ This scenario tests the throughput when producers use the `enqueue_bulk` interfa
     * **Data Point:** Under $\text{P}=16$ saturated contention, **daking** bulk operation performance reaches **$\sim 161 \text{ M/s}$**, nearly 4 times the single-element throughput.
     * **Conclusion:** The **Bulk Atomicity** mechanism  (single CAS submission of a locally built list segment) in `daking::MPSC_queue` largely overcomes the contention bottleneck of linked-list MPSC queues, resulting in outstanding performance.
 
+3. **Steady Latency Performance**
+    * `daking::MPSC_queue::enqueue/dequeue` both have good latency performance.
+  
 ## Advantages
 
 1.  High throughput during efficient uniform producer batch writes and extremely high throughput during non-uniform producer bursts.
@@ -174,6 +189,7 @@ This scenario tests the throughput when producers use the `enqueue_bulk` interfa
 4.  Utilizing a **thread-local pool** reduces contention for global resources.
 5.  The **Global Chunk Stack** enables extremely fast allocation and deallocation of the **thread-local pool**, both implemented as **$O(1)$** operations via pointer swaps.
 6.  Allocating nodes in units of **pages** helps to mitigate pointer chasing.
+7.  **Lineraization** is always guaranteed among producers. C++20 `dequeue` guarantee the linerazization between P and C.
 
 ## Disadvantages
 

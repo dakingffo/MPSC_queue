@@ -156,6 +156,17 @@ Compiler: MSVC -O2
 | **moodycamel** | **2** | **1** | **68.9161** | **本部分最高表现 (P=2)** |
 | moodycamel | 16 | 1 | 43.4848 | 16P时无明显批量优势 |
 
+**第四部分：Enqueue/Dequeue Latency**
+(此部分基于HdrHistogram，在Linux平台测试)
+我们得到了以下延迟表现：
+`Enqueue`对比：
+![P99.9 Enqueue](./P99.9%20Enqueue.png "P99.9 Enqueue Comparison")
+![P99.99999 Enqueue](./P99.99999%20Enqueue.png "P99.99999 Enqueue Comparison")
+`daking Dequeue(try_dequeue)`：
+![daking Dequeue](./daking_dequeue_latency.png "daking Dequeue")
+`moodycamel Dequeue(try_dequeue)`：
+![moodycamel Dequeue](./moodycamel_dequeue_latency.png "moodycamel Dequeue")
+
 ### 3. 结论
 1. 弹性恢复：非均匀负载下的性能保证
 
@@ -167,6 +178,9 @@ Compiler: MSVC -O2
 * 在 $\text{P}=16$ 饱和竞争下，批量操作性能高达 **$\sim 161 \text{ M/s}$**，是单元素入队的近 4 倍。
 * **结论：** `daking::MPSC_queue` 的**批量原子化**机制（单次 CAS 提交整个链表段 ）很大程度上突破了链表式 MPSC 队列竞争瓶颈，有显著性能表现。
 
+3. 稳定的延迟表现
+* `daking::MPSC_queue::enqueue/dequeue`均表现出稳定延迟。
+
 
 ## 优势
 
@@ -176,7 +190,7 @@ Compiler: MSVC -O2
 4.  使用**线程本地池**，减少了对全局资源的竞争。
 5.  **全局块栈**对**线程本地池**的分配和释放（deallocation）速度极快，两者都是通过指针交换实现的 **$O(1)$** 操作。
 6.  通过以**页pages**为单位分配节点，有助于缓解指针追逐。
-
+7.  生产者之间总是**线性化**的，使用C++20提供的`dequeue`方法则保证生产者与消费者之间的线性化。
 
 ## 劣势 (DISADVANTAGES)
 
