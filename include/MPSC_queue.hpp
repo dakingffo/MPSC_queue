@@ -598,44 +598,21 @@ namespace daking {
         }
 
         /* Global LockFree*/
-        static Chunk_stack                global_chunk_stack_;
-        static std::atomic<size_type>     global_instance_count_;
+        inline static Chunk_stack            global_chunk_stack_{};
+        inline static std::atomic<size_type> global_instance_count_ = 0;
 
         /* Global Mutex*/ 
-        static std::mutex                 global_mutex_;
-        static Manager*                   global_manager_;
+        inline static std::mutex             global_mutex_{};
+        inline static Manager*               global_manager_ = nullptr;
 
         /* ThreadLocal*/
-        thread_local static Node*         thread_local_node_list_;
-        thread_local static size_type     thread_local_node_count_;
+        inline thread_local static Node*     thread_local_node_list_ = nullptr;
+        inline thread_local static size_type thread_local_node_count_ = 0;
 
         /* MPSC */
-        alignas(align) std::atomic<Node*> head_;
-        alignas(align) Node*              tail_;
+        alignas(align) std::atomic<Node*>    head_;
+        alignas(align) Node*                 tail_;
     };
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
-    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::Node*
-        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::thread_local_node_list_ = nullptr;
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
-    thread_local typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::size_type
-        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::thread_local_node_count_ = 0;
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
-    alignas(Align) typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::Chunk_stack
-        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_chunk_stack_{};
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
-    alignas(Align) std::atomic<typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::size_type> 
-        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_instance_count_ = 0;
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
-    std::mutex MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_mutex_{};
-
-    template <typename Ty, std::size_t ThreadLocalCapacity, std::size_t Align, typename Alloc>
-    typename MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::Manager*
-        MPSC_queue<Ty, ThreadLocalCapacity, Align, Alloc>::global_manager_ = nullptr;
 }
 
 #endif // !DAKING_MPSC_QUEUE_HPP
