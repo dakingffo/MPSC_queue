@@ -58,14 +58,15 @@ SOFTWARE.
 #   endif
 #endif // !DAKING_ALWAYS_INLINE
 
+#include <iostream>
 #include <type_traits>
 #include <memory>
 #include <iterator>
 #include <utility>
 #include <atomic>
 #include <mutex>
-#include <vector>
-#include <chrono>
+#include <thread>
+#include <unordered_map>
 
 namespace daking {
     /*
@@ -200,6 +201,30 @@ namespace daking {
             std::atomic<Tagged_ptr> top{};
         };
 
+        template <typename Queue>
+        struct MPSC_thread_hook {
+            using size_type = typename Queue::size_type;
+            using Manager   = typename Queue::Manager;
+            using Node      = MPSC_node<Queue>;
+
+            MPSC_thread_hook(std::thread::id tid, Node** node, size_type* size) : tid_(tid) {
+                std::lock_guard<std::mutex> guard(Queue::global_mutex_);
+                Manager* global_manager = Queue::global_manager_;
+                // Only being called after global_manager is not a nullptr.
+                global_manager->Register(tid_, node, size);
+            }
+
+            ~MPSC_thread_hook() {
+                std::lock_guard<std::mutex> guard(Queue::global_mutex_);
+                Manager* global_manager = Queue::global_manager_; 
+                if (global_manager) {
+                    global_manager->Unregister(tid_);
+                }
+            }
+
+            std::thread::id tid_;
+        };
+
         template <typename Queue, typename Alloc>
         struct MPSC_manager :
             public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_node<Queue>>,
@@ -208,7 +233,9 @@ namespace daking {
             using Node                 = MPSC_node<Queue>;
             using Page                 = MPSC_page<Queue>;
             using Thread_local_pair    = std::pair<Node**, size_type*>;
-            using Thread_local_manager = std::vector<Thread_local_pair, typename std::allocator_traits<Alloc>::template rebind_alloc<Thread_local_pair>>;
+            using Thread_local_manager = std::unordered_map<std::thread::id, Thread_local_pair,
+                std::hash<std::thread::id>, std::equal_to<std::thread::id>, 
+                typename std::allocator_traits<Alloc>::template rebind_alloc<std::pair<std::thread::id, Thread_local_pair>>>;
             using Alloc_node           = typename std::allocator_traits<Alloc>::template rebind_alloc<Node>;
             using Altraits_node        = std::allocator_traits<Alloc_node>;
             using Alloc_page           = typename std::allocator_traits<Alloc>::template rebind_alloc<Page>;
@@ -222,7 +249,8 @@ namespace daking {
                 }
 
                 // Now all thread_local variables are invalid.
-                for (auto [ptr, size] : global_thread_local_manager_) {
+                for (auto& [tid, pair] : global_thread_local_manager_) {
+                    auto [ptr, size] = pair;
                     *ptr = nullptr;
                     *size = 0;
                 }
@@ -250,8 +278,18 @@ namespace daking {
                 global_node_count_.store(global_node_count_ + count, std::memory_order_release);
             }
 
-            DAKING_ALWAYS_INLINE void Register(Node** node, size_type* size) {
-                global_thread_local_manager_.emplace_back(node, size);
+            DAKING_ALWAYS_INLINE void Register(std::thread::id tid, Node** node, size_type* size) {
+                // Already locked
+                if (!global_thread_local_manager_.count(tid)) {
+                    global_thread_local_manager_[tid] = {node, size};
+                }
+            }
+
+            DAKING_ALWAYS_INLINE void Unregister(std::thread::id tid) {
+                // Already locked
+                if (global_thread_local_manager_.count(tid)) {
+                    global_thread_local_manager_.erase(tid);
+                }
             }
 
             DAKING_ALWAYS_INLINE size_type Node_count() noexcept {
@@ -290,6 +328,7 @@ namespace daking {
         using Node             = detail::MPSC_node<MPSC_queue>;
         using Page             = detail::MPSC_page<MPSC_queue>;
         using Chunk_stack      = detail::MPSC_chunk_stack<MPSC_queue>;
+        using Hook             = detail::MPSC_thread_hook<MPSC_queue>;
         using Manager          = detail::MPSC_manager<MPSC_queue, Alloc>;
         using Alloc_manager    = typename std::allocator_traits<allocator_type>::template rebind_alloc<Manager>;
         using Altraits_manager = std::allocator_traits<Alloc_manager>;
@@ -306,6 +345,7 @@ namespace daking {
             "Alloc should have a tempalte constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
         );
 
+        friend Hook;
         friend Manager;
         friend Altraits_node;
         friend Altraits_page;
@@ -314,7 +354,7 @@ namespace daking {
         MPSC_queue(const allocator_type& alloc = allocator_type()) 
             : Alloc_manager(alloc) /* Alloc<Ty> -> Alloc<Manager>, which means Alloc should have a template constructor */{
             global_instance_count_++;
-            Register_global_manager(alloc);
+            Try_create_global_manager(alloc);
             Initial();
         }
 
@@ -342,6 +382,8 @@ namespace daking {
 
         template <typename...Args>
         DAKING_ALWAYS_INLINE void emplace(Args&&... args) {
+            thread_local static Hook thread_hook(std::this_thread::get_id(), &thread_local_node_list_, &thread_local_node_count_);
+
             Node* new_node = Allocate();
             Altraits_node::construct(Get_manager(), std::addressof(new_node->value_), std::forward<Args>(args)...);
 
@@ -363,6 +405,8 @@ namespace daking {
         DAKING_ALWAYS_INLINE void enqueue_bulk(const_reference value, size_type n) {
             // N times thread_local operation, One time CAS operation.
             // So it is more efficient than N times enqueue.
+            thread_local static Hook thread_hook(std::this_thread::get_id(), &thread_local_node_list_, &thread_local_node_count_);
+
             Node* first_new_node = Allocate();
             Node* prev_node = first_new_node;
             Altraits_node::construct(Get_manager(), std::addressof(first_new_node->value_), value);
@@ -387,6 +431,7 @@ namespace daking {
                 "Iterator must be at least input iterator.");
             static_assert(std::is_same_v<typename std::iterator_traits<InputIt>::value_type, value_type>,
                 "The value type of iterator must be same as MPSC_queue::value_type.");
+            thread_local static Hook thread_hook(std::this_thread::get_id(), &thread_local_node_list_, &thread_local_node_count_);
 
             Node* first_new_node = Allocate();
             Node* prev_node = first_new_node;
@@ -417,9 +462,10 @@ namespace daking {
             noexcept(std::is_nothrow_assignable_v<T&, value_type&&> && 
                 std::is_nothrow_destructible_v<value_type>) {
             static_assert(std::is_assignable_v<T&, value_type&&>);
+            thread_local static Hook thread_hook(std::this_thread::get_id(), &thread_local_node_list_, &thread_local_node_count_);
 
             Node* next = tail_->next_.load(std::memory_order_acquire);
-            if (next) [[likely]]{
+            if (next) [[likely]] {
                 value = std::move(next->value_);
                 Altraits_node::destroy(Get_manager(), std::addressof(next->value_));
                 Deallocate(std::exchange(tail_, next));
@@ -439,7 +485,8 @@ namespace daking {
                 std::is_assignable_v<typename std::iterator_traits<OutputIt>::reference, value_type&&> ||
                 std::is_same_v<typename std::iterator_traits<OutputIt>::iterator_category, std::output_iterator_tag>,
                 "Iterator must be at least output iterator or forward iterator.");
-
+            thread_local static Hook thread_hook(std::this_thread::get_id(), &thread_local_node_list_, &thread_local_node_count_);
+            
 			size_type count = 0;
             while (count < n && try_dequeue(*it)) {
                 ++count;
@@ -520,6 +567,8 @@ namespace daking {
 
     private:
         DAKING_ALWAYS_INLINE void Initial() {
+            thread_local static Hook thread_hook(std::this_thread::get_id(), &thread_local_node_list_, &thread_local_node_count_);
+
             Node* dummy = Allocate();
             tail_ = dummy;
             head_.store(dummy, std::memory_order_release);
@@ -554,14 +603,13 @@ namespace daking {
             return *global_manager_;
         }
 
-        DAKING_ALWAYS_INLINE void Register_global_manager(const allocator_type& alloc) noexcept {
+        DAKING_ALWAYS_INLINE void Try_create_global_manager(const allocator_type& alloc) noexcept {
             std::lock_guard<std::mutex> lock(global_mutex_);
             if (!global_manager_) {
                 Manager* manager = Altraits_manager::allocate(*this, 1);
                 Altraits_manager::construct(*this, manager, alloc);
                 global_manager_ = manager;
             }
-            global_manager_->Register(&thread_local_node_list_, &thread_local_node_count_);
         }
 
         DAKING_ALWAYS_INLINE static bool Reserve_global_external(size_type chunk_count) {
