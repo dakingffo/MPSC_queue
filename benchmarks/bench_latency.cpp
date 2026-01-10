@@ -67,10 +67,12 @@ static void BM_MPSC_PureEnqueueLatency(benchmark::State& state) {
     start_signal.store(true, std::memory_order_release);
 
     for (auto _ : state) {
-        uint64_t start = __rdtsc();
-        q.enqueue(42);
-        uint64_t end = __rdtsc();
-        hdr_record_value(hist, end - start);
+        for (int i = 0; i < 10000; ++i) {
+            uint64_t start = __rdtsc();
+            q.enqueue(42);
+            uint64_t end = __rdtsc();
+            hdr_record_value(hist, end - start);
+        }
     }
 
     running = false;
@@ -98,10 +100,10 @@ static void BM_MPSC_PureDequeueLatency(benchmark::State& state) {
     pin_thread(0);
     for (auto _ : state) {
         state.PauseTiming();
-        for(int i=0; i<1000; ++i) q.enqueue(i);
+        for(int i=0; i<10000; ++i) q.enqueue(i);
         state.ResumeTiming();
 
-        for(int i=0; i<1000; ++i) {
+        for(int i=0; i<10000; ++i) {
             int val;
             uint64_t start = __rdtsc();
             if (q.try_dequeue(val)) {
