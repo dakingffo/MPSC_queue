@@ -301,7 +301,7 @@ namespace daking {
                 return global_node_count_.load(std::memory_order_acquire);
             }
 
-            DAKING_ALWAYS_INLINE Thread_local_manager& Get_global_thread_local_manager() noexcept {
+            DAKING_ALWAYS_INLINE Thread_local_manager& Get_global_thread_local_manager() {
                 static Thread_local_manager global_thread_local_manager(static_cast<const Alloc_node&>(*this));
                 return global_thread_local_manager;
             }
