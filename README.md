@@ -197,7 +197,6 @@ We get below performance：
 1.  Memory **cannot be freed** if any `MPSC_queue` instance is still alive, as all nodes have been freely shuffled and combined.
 2.  `ThreadLocalCapacity` (thread-local capacity) is fixed at **compile time**.
 3.  Pointer chasing cannot be avoided because it is a pure linked-list structure.
-4.  **WARNING: If the queue is destructed while nodes remain inside, the destructors of the objects stored in those nodes will not be called\!** (This is because only the consumer knows the tail pointer of the queue).
 
 ## Features
 
