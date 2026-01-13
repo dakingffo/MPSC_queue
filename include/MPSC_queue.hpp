@@ -595,6 +595,15 @@ namespace daking {
 			return global_manager_instance_ ? Reserve_global_external(chunk_count) : false;
         }
 
+
+        DAKING_ALWAYS_INLINE static void this_thread_available_atexit() {
+		    Get_thread_hook();
+        }
+        // ↑↓Actually they are same, but I prefer to have some sweet dreams that my queue has a wide audience.
+        DAKING_ALWAYS_INLINE static void touch_thread_local() {
+		    Get_thread_hook();
+        }
+
     private:
         DAKING_ALWAYS_INLINE static Manager& Get_global_manager() noexcept {
             return *global_manager_instance_;
