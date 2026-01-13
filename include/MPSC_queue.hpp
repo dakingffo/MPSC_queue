@@ -104,7 +104,7 @@ namespace daking {
 
          GLOBAL:  
                  TOP
-		 [[B][B][B][R][G][R]]     comsumers pop chunks from here and producers push chunks to here
+		 [[B][B][B][R][G][R]]     consumers pop chunks from here and producers push chunks to here
                   ↓
          [[R][R][G][R][R][G]]
                   ↓
@@ -120,7 +120,7 @@ namespace daking {
             MPSC_node() {
                 next_.store(nullptr, std::memory_order_release);
             }
-            ~MPSC_node() { /* Don't call destuctor of value_ here*/ }
+            ~MPSC_node() { /* Don't call destructor of value_ here*/ }
 
             union {
                 typename Queue::value_type value_;
@@ -187,7 +187,7 @@ namespace daking {
                     new_top.tag_ = old_top.tag_ + 1;
                     // If TA and TB reach here at the same time
                     // And A pop the chunk successfully, then it will construct object at old_top.node_->next_chunk_, 
-                    // so that B will read a invaild value, but this value will not pass the next CAS.(old_top have been updated by A)
+                    // so that B will read a invalid value, but this value will not pass the next CAS.(old_top have been updated by A)
                     // Actually, this is a data race, but CAS protect B form UB. 
                 } while (!top.compare_exchange_weak(
                     old_top, new_top,
@@ -234,7 +234,7 @@ namespace daking {
 
         // If allocator is stateless, there is no data race.
         // But if it has stateful member: construct/destroy, you should protect these two functions by yourself,
-        // and other funstions are protected by daking.
+        // and other functions are protected by daking.
         template <typename Queue, typename ThreadLocalPair, typename Alloc>
         struct MPSC_manager : public std::allocator<ThreadLocalPair>,
             public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_node<Queue>>,
@@ -257,6 +257,7 @@ namespace daking {
             ~MPSC_manager() {
                 /* Already locked */
                 for (auto [tid, pair_ptr] :global_thread_local_manager_) {
+                    Altraits_pair::destroy(*this, pair_ptr);
                     Altraits_pair::deallocate(*this, pair_ptr, 1);
                 }
             }
@@ -301,7 +302,7 @@ namespace daking {
                 /* Already locked */
                 if (!global_thread_local_manager_.count(tid)) {
                     Thread_local_pair* new_pair = Altraits_pair::allocate(*this, 1);
-                    Altraits_page::construct(*this, new_pair, nullptr, 0);
+                    Altraits_pair::construct(*this, new_pair, nullptr, 0);
                     global_thread_local_manager_[tid] = new_pair;
                 }
                 return global_thread_local_manager_[tid];
@@ -370,7 +371,7 @@ namespace daking {
             std::is_constructible_v<Alloc_manager, allocator_type> &&   // for constructor of MPSC_queue
             std::is_constructible_v<Alloc_node, allocator_type>    &&   // for constructor of MPSC_manager
             std::is_constructible_v<Alloc_page, allocator_type>,        // for constructor of MPSC_manager
-            "Alloc should have a tempalte constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
+            "Alloc should have a template constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
         );
 
         friend Hook;
@@ -631,9 +632,9 @@ namespace daking {
             return res;
         }
 
-        DAKING_ALWAYS_INLINE void Deallocate(Node* nd) noexcept {
-            nd->next_ = Get_thread_local_node_list();
-            Get_thread_local_node_list() = nd;
+        DAKING_ALWAYS_INLINE void Deallocate(Node* node) noexcept {
+            node->next_.store(Get_thread_local_node_list(), std::memory_order_relaxed);
+            Get_thread_local_node_list() = node;
             if (++Get_thread_local_node_size() >= thread_local_capacity) [[unlikely]] {
 				global_chunk_stack_.Push(Get_thread_local_node_list());
                 Get_thread_local_node_list() = nullptr;
