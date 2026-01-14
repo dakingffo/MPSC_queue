@@ -240,7 +240,6 @@ size_t count = queue.try_dequeue_bulk(std::back_inserter(results), max_fetch);
 
 如果使用C++20或更高版本，则提供`dequeue/dequeue_bulk`方法进行阻塞等待，但会导致负载状态为SPSClike时的性能下降。
 
-**警告：如果队列被析构时队内还有节点，那么这些节点存储的对象的析构函数无法被调用！**
 ### 可定制模版参数和内存操作
 
 ```c++

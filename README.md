@@ -245,8 +245,6 @@ Additional Note on C++20 Features:
 If C++20 or later is used, the 'dequeue' and 'dequeue_bulk' methods provide blocking wait functionality. 
 However, using these blocking methods may lead to performance degradation when the load state resembles SPSC-like behavior.
 
-**Warning: If the queue is destructed while there are still nodes inside, the destructors for the objects stored in those nodes cannot be called\!**
-
 ### Customizable Template Parameters and Memory Operations
 
 ```c++
