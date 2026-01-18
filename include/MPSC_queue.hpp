@@ -33,20 +33,23 @@ SOFTWARE.
 #ifndef DAKING_NO_TSAN
 #   if defined(__has_feature) 
 #       if __has_feature(thread_sanitizer)
-#           define DAKING_NO_TSAN __attribute__((no_sanitize("thread")))
 #           include <sanitizer/tsan_interface.h>
             extern "C" void AnnotateBenignRaceSized(const char* f, int l, const volatile void* mem, unsigned int size, const char* desc);
+#           define DAKING_NO_TSAN __attribute__((no_sanitize("thread")))
+#           define DAKING_TSAN_ANNOTATE_IGNORED(mem, size, desc) AnnotateBenignRaceSized(__FILE__, __LINE__, mem, size, desc)
+#           define DAKING_TSAN_ANNOTATE_ACQUIRE(mem) __tsan_acquire(mem)
+#           define DAKING_TSAN_ANNOTATE_RELEASE(mem) __tsan_release(mem)
 #       else
 #           define DAKING_NO_TSAN
-#           define __tsan_acquire(a)
-#           define __tsan_release(a)
-#           define AnnotateBenignRaceSized(f, l, mem, size, reason)
+#           define DAKING_TSAN_ANNOTATE_IGNORED(mem, size, desc)
+#           define DAKING_TSAN_ANNOTATE_ACQUIRE(mem)
+#           define DAKING_TSAN_ANNOTATE_RELEASE(mem)
 #       endif
 #   else
 #       define DAKING_NO_TSAN
-#       define __tsan_acquire(a)
-#       define __tsan_release(a)
-#       define AnnotateBenignRaceSized(f, l, mem, size, reason)
+#       define DAKING_TSAN_ANNOTATE_IGNORED(mem, size, desc)
+#       define DAKING_TSAN_ANNOTATE_ACQUIRE(mem)
+#       define DAKING_TSAN_ANNOTATE_RELEASE(mem)
 #   endif
 #endif // !DAKING_NO_TSAN
 
@@ -193,7 +196,7 @@ namespace daking {
                     if (!old_top.node_) {
                         return false;
                     }
-                    AnnotateBenignRaceSized(__FILE__, __LINE__, &old_top.node_->next_chunk_, sizeof(Node*), "Reason: healthy data race");
+                    DAKING_TSAN_ANNOTATE_IGNORED(&old_top.node_->next_chunk_, sizeof(Node*), "Reason: healthy data race");
                     new_top.node_ = old_top.node_->next_chunk_;
                     new_top.tag_ = old_top.tag_ + 1;
                     // If TA and TB reach here at the same time
@@ -639,8 +642,8 @@ namespace daking {
                     Reserve_global_internal();
 				}
             }
-            __tsan_acquire(thread_local_node_list);
-            __tsan_acquire(thread_local_node_list->next_);
+            DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list);
+            DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list->next_);
             Node* res = std::exchange(thread_local_node_list, thread_local_node_list->next_.load(std::memory_order_relaxed));
             res->next_.store(nullptr, std::memory_order_relaxed);
             return res;
@@ -650,7 +653,7 @@ namespace daking {
             Node*& thread_local_node_list = Get_thread_local_node_list();
             node->next_.store(thread_local_node_list, std::memory_order_relaxed);
             thread_local_node_list = node;
-            __tsan_release(node);
+            DAKING_TSAN_ANNOTATE_RELEASE(node);
             if (++Get_thread_local_node_size() >= thread_local_capacity) [[unlikely]] {
 				global_chunk_stack_.Push(thread_local_node_list);
                 thread_local_node_list = nullptr;
