@@ -58,15 +58,15 @@ SOFTWARE.
 #   endif
 #endif // !DAKING_ALWAYS_INLINE
 
-#include <iostream>
-#include <type_traits>
 #include <memory>
+#include <type_traits>
 #include <iterator>
 #include <utility>
 #include <atomic>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace daking {
     /*
@@ -126,7 +126,7 @@ namespace daking {
                 typename Queue::value_type value_;
                 MPSC_node*                 next_chunk_;
             };
-            std::atomic<MPSC_node*>  next_;
+            std::atomic<MPSC_node*>        next_;
         };
 
         template <typename Queue>
@@ -236,31 +236,24 @@ namespace daking {
         // But if it has stateful member: construct/destroy, you should protect these two functions by yourself,
         // and other functions are protected by daking.
         template <typename Queue, typename ThreadLocalPair, typename Alloc>
-        struct MPSC_manager : public std::allocator<ThreadLocalPair>,
+        struct MPSC_manager : 
             public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_node<Queue>>,
             public std::allocator_traits<Alloc>::template rebind_alloc<detail::MPSC_page<Queue>> {
-            using size_type            = typename Queue::size_type;
-            using Node                 = MPSC_node<Queue>;
-            using Page                 = MPSC_page<Queue>;
-            using Thread_local_pair    = ThreadLocalPair;
-            using Thread_local_manager = std::unordered_map<std::thread::id, Thread_local_pair*>;
-            using Alloc_pair           = std::allocator<Thread_local_pair>; // Should not be managed by CustomAllocator
-            using Altraits_pair        = std::allocator_traits<Alloc_pair>;
-            using Alloc_node           = typename std::allocator_traits<Alloc>::template rebind_alloc<Node>;
-            using Altraits_node        = std::allocator_traits<Alloc_node>;
-            using Alloc_page           = typename std::allocator_traits<Alloc>::template rebind_alloc<Page>;
-            using Altraits_page        = std::allocator_traits<Alloc_page>;
+            using size_type             = typename Queue::size_type;
+            using Node                  = MPSC_node<Queue>;
+            using Page                  = MPSC_page<Queue>;
+            using Thread_local_pair     = ThreadLocalPair;
+            using Thread_local_manager  = std::unordered_map<std::thread::id, std::unique_ptr<Thread_local_pair>>;
+            using Thread_local_recycler = std::vector<std::unique_ptr<Thread_local_pair>>;
+            using Alloc_node            = typename std::allocator_traits<Alloc>::template rebind_alloc<Node>;
+            using Altraits_node         = std::allocator_traits<Alloc_node>;
+            using Alloc_page            = typename std::allocator_traits<Alloc>::template rebind_alloc<Page>;
+            using Altraits_page         = std::allocator_traits<Alloc_page>;
 
             MPSC_manager(const Alloc& alloc) 
-                : Alloc_pair(), Alloc_node(alloc), Alloc_page(alloc) {}
+                : Alloc_node(alloc), Alloc_page(alloc) {}
 
-            ~MPSC_manager() {
-                /* Already locked */
-                for (auto [tid, pair_ptr] :global_thread_local_manager_) {
-                    Altraits_pair::destroy(*this, pair_ptr);
-                    Altraits_pair::deallocate(*this, pair_ptr, 1);
-                }
-            }
+            ~MPSC_manager() = default;
 
             void Reset() {
                 /* Already locked */
@@ -269,6 +262,12 @@ namespace daking {
                     node = nullptr;
                     size = 0;
                 }
+                for (auto& pair_ptr : global_thread_local_recycler_) {
+                    auto& [node, size] = *pair_ptr;
+                    node = nullptr;
+                    size = 0;
+                }
+
                 while (global_page_list_) {
                     Altraits_node::deallocate(*this, global_page_list_->node_, global_page_list_->count_);
                     Altraits_page::deallocate(*this, std::exchange(global_page_list_, global_page_list_->next_), 1);
@@ -288,8 +287,7 @@ namespace daking {
                     new_nodes[i].next_ = new_nodes + i + 1;
                     if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) [[unlikely]] {
                         // chunk_count = count / ThreadLocalCapacity
-                        new_nodes[i].next_ = nullptr;
-                        std::atomic_thread_fence(std::memory_order_acq_rel);
+                        new_nodes[i].next_.store(nullptr, std::memory_order_release);
                         // mutex don't protect global_chunk_stack_, so we need make a atomice fence
                         Queue::global_chunk_stack_.Push(&new_nodes[i - Queue::thread_local_capacity + 1]);
                     }
@@ -300,20 +298,20 @@ namespace daking {
 
             DAKING_ALWAYS_INLINE Thread_local_pair* Register(std::thread::id tid) {
                 /* Already locked */
-                if (!global_thread_local_manager_.count(tid)) {
-                    Thread_local_pair* new_pair = Altraits_pair::allocate(*this, 1);
-                    Altraits_pair::construct(*this, new_pair, nullptr, 0);
-                    global_thread_local_manager_[tid] = new_pair;
+                if (!global_thread_local_recycler_.empty()) {
+                    global_thread_local_manager_[tid] = std::move(global_thread_local_recycler_.back());
+                    global_thread_local_recycler_.pop_back();
                 }
-                return global_thread_local_manager_[tid];
+                else {
+                    global_thread_local_manager_[tid] = std::make_unique<Thread_local_pair>(nullptr, 0);
+                }
+                return global_thread_local_manager_[tid].get();
             }
 
             DAKING_ALWAYS_INLINE void Unregister(std::thread::id tid) {
                 /* Already locked */
-                if (global_thread_local_manager_.count(tid)) {
-                    Altraits_pair::deallocate(*this, global_thread_local_manager_[tid], 1);
-                    global_thread_local_manager_.erase(tid);
-                }
+                global_thread_local_recycler_.push_back(std::move(global_thread_local_manager_[tid]));
+                global_thread_local_manager_.erase(tid);
             }
 
             DAKING_ALWAYS_INLINE size_type Node_count() noexcept {
@@ -328,6 +326,7 @@ namespace daking {
             Page*                  global_page_list_  = nullptr;
             std::atomic<size_type> global_node_count_ = 0;
             Thread_local_manager   global_thread_local_manager_;
+            Thread_local_recycler  global_thread_local_recycler_;
         };
     }
 
@@ -400,6 +399,7 @@ namespace daking {
                 Deallocate(std::exchange(tail_, next));
                 next = tail_->next_.load(std::memory_order_acquire);
             }
+            Deallocate(tail_);
 
             if (--global_instance_count_ == 0) {
                 // only the last instance free the global resource
@@ -621,22 +621,24 @@ namespace daking {
         }
 
         DAKING_ALWAYS_INLINE Node* Allocate() {
-            if (!Get_thread_local_node_list()) [[unlikely]] {
-                while (!global_chunk_stack_.Try_pop(Get_thread_local_node_list())) {
+            Node*& thread_local_node_list = Get_thread_local_node_list();
+            if (!thread_local_node_list) [[unlikely]] {
+                while (!global_chunk_stack_.Try_pop(thread_local_node_list)) {
                     Reserve_global_internal();
 				}
             }
-            Node* res = std::exchange(Get_thread_local_node_list(), Get_thread_local_node_list()->next_);
+            Node* res = std::exchange(thread_local_node_list, thread_local_node_list->next_);
             res->next_.store(nullptr, std::memory_order_relaxed);
             return res;
         }
 
         DAKING_ALWAYS_INLINE void Deallocate(Node* node) noexcept {
-            node->next_ = Get_thread_local_node_list();
-            Get_thread_local_node_list() = node;
+            Node*& thread_local_node_list = Get_thread_local_node_list();
+            node->next_ = thread_local_node_list;
+            thread_local_node_list = node;
             if (++Get_thread_local_node_size() >= thread_local_capacity) [[unlikely]] {
-				global_chunk_stack_.Push(Get_thread_local_node_list());
-                Get_thread_local_node_list() = nullptr;
+				global_chunk_stack_.Push(thread_local_node_list);
+                thread_local_node_list = nullptr;
                 Get_thread_local_node_size() = 0;
             }
         }
