@@ -34,13 +34,22 @@ SOFTWARE.
 #   if defined(__has_feature) 
 #       if __has_feature(thread_sanitizer)
 #           define DAKING_NO_TSAN __attribute__((no_sanitize("thread")))
+#           include <sanitizer/tsan_interface.h>
+            extern "C" void AnnotateBenignRaceSized(const char* f, int l, const volatile void* mem, unsigned int size, const char* desc);
 #       else
 #           define DAKING_NO_TSAN
+#           define __tsan_acquire(a)
+#           define __tsan_release(a)
+#           define AnnotateBenignRaceSized(f, l, mem, size, reason)
 #       endif
 #   else
 #       define DAKING_NO_TSAN
+#       define __tsan_acquire(a)
+#       define __tsan_release(a)
+#       define AnnotateBenignRaceSized(f, l, mem, size, reason)
 #   endif
 #endif // !DAKING_NO_TSAN
+
 
 #ifndef DAKING_HAS_CXX20_OR_ABOVE
     #if defined(_MSC_VER) 
@@ -67,6 +76,7 @@ SOFTWARE.
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <cstddef>
 
 namespace daking {
     /*
@@ -158,13 +168,13 @@ namespace daking {
                 top.store(Tagged_ptr{ nullptr, 0 });
             }
 
-            DAKING_NO_TSAN void Push(Node* chunk) noexcept /* Pointer Swap */ {
+            DAKING_ALWAYS_INLINE void Push(Node* chunk) noexcept /* Pointer Swap */ {
                 Tagged_ptr new_top{ chunk, 0 };
                 Tagged_ptr old_top = top.load(std::memory_order_relaxed);
                 // If TB read old_top, and TA pop the old_top then
                 do {
                     new_top.node_->next_chunk_ = old_top.node_;
-                    // then B will read a invalid value(which is regard as object address at TA)
+                    // then B will read a invalid value
                     // but B will not pass CAS.
                     // Actually, this is a data race, but CAS protect B form UB. 
                     new_top.tag_ = old_top.tag_ + 1;
@@ -175,7 +185,7 @@ namespace daking {
                 ));
             }
 
-            DAKING_NO_TSAN bool Try_pop(Node*& chunk) noexcept /* Pointer Swap */ {
+            DAKING_ALWAYS_INLINE bool Try_pop(Node*& chunk) noexcept /* Pointer Swap */ {
                 Tagged_ptr old_top = top.load(std::memory_order_acquire);
                 Tagged_ptr new_top{};
 
@@ -183,6 +193,7 @@ namespace daking {
                     if (!old_top.node_) {
                         return false;
                     }
+                    AnnotateBenignRaceSized(__FILE__, __LINE__, &old_top.node_->next_chunk_, sizeof(Node*), "Reason: healthy data race");
                     new_top.node_ = old_top.node_->next_chunk_;
                     new_top.tag_ = old_top.tag_ + 1;
                     // If TA and TB reach here at the same time
@@ -284,11 +295,12 @@ namespace daking {
                 global_page_list_ = new_page;
 
                 for (size_type i = 0; i < count; i++) {
-                    new_nodes[i].next_ = new_nodes + i + 1;
+                    new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
                     if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) [[unlikely]] {
                         // chunk_count = count / ThreadLocalCapacity
-                        new_nodes[i].next_.store(nullptr, std::memory_order_release);
-                        // mutex don't protect global_chunk_stack_, so we need make a atomice fence
+                        new_nodes[i].next_ = nullptr;
+                        std::atomic_thread_fence(std::memory_order_acq_rel);
+                        // mutex don't protect global_chunk_stack_
                         Queue::global_chunk_stack_.Push(&new_nodes[i - Queue::thread_local_capacity + 1]);
                     }
                 }
@@ -627,15 +639,18 @@ namespace daking {
                     Reserve_global_internal();
 				}
             }
-            Node* res = std::exchange(thread_local_node_list, thread_local_node_list->next_);
+            __tsan_acquire(thread_local_node_list);
+            __tsan_acquire(thread_local_node_list->next_);
+            Node* res = std::exchange(thread_local_node_list, thread_local_node_list->next_.load(std::memory_order_relaxed));
             res->next_.store(nullptr, std::memory_order_relaxed);
             return res;
         }
 
         DAKING_ALWAYS_INLINE void Deallocate(Node* node) noexcept {
             Node*& thread_local_node_list = Get_thread_local_node_list();
-            node->next_ = thread_local_node_list;
+            node->next_.store(thread_local_node_list, std::memory_order_relaxed);
             thread_local_node_list = node;
+            __tsan_release(node);
             if (++Get_thread_local_node_size() >= thread_local_capacity) [[unlikely]] {
 				global_chunk_stack_.Push(thread_local_node_list);
                 thread_local_node_list = nullptr;
