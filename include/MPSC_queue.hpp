@@ -70,6 +70,23 @@ SOFTWARE.
 #   endif
 #endif // !DAKING_ALWAYS_INLINE
 
+
+#ifndef DAKING_LIKELY
+#   if DAKING_HAS_CXX20_OR_ABOVE
+#       define DAKING_LIKELY [[likely]]
+#   else
+#       define DAKING_LIKELY
+#   endif
+#endif // !DAKING_LIKELY
+
+#ifndef DAKING_UNLIKELY
+#   if DAKING_HAS_CXX20_OR_ABOVE
+#       define DAKING_UNLIKELY [[unlikely]]
+#   else
+#       define DAKING_UNLIKELY
+#   endif
+#endif // !DAKING_LIKELY
+
 #include <memory>
 #include <type_traits>
 #include <iterator>
@@ -299,7 +316,7 @@ namespace daking {
 
                 for (size_type i = 0; i < count; i++) {
                     new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
-                    if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) [[unlikely]] {
+                    if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
                         // chunk_count = count / ThreadLocalCapacity
                         new_nodes[i].next_ = nullptr;
                         std::atomic_thread_fence(std::memory_order_acq_rel);
@@ -511,7 +528,7 @@ namespace daking {
             static_assert(std::is_assignable_v<T&, value_type&&>);
 
             Node* next = tail_->next_.load(std::memory_order_acquire);
-            if (next) [[likely]] {
+            if (next) DAKING_LIKELY {
                 value = std::move(next->value_);
                 Altraits_node::destroy(Get_global_manager(), std::addressof(next->value_));
                 Deallocate(std::exchange(tail_, next));
@@ -637,7 +654,7 @@ namespace daking {
 
         DAKING_ALWAYS_INLINE Node* Allocate() {
             Node*& thread_local_node_list = Get_thread_local_node_list();
-            if (!thread_local_node_list) [[unlikely]] {
+            if (!thread_local_node_list) DAKING_UNLIKELY {
                 while (!global_chunk_stack_.Try_pop(thread_local_node_list)) {
                     Reserve_global_internal();
 				}
@@ -654,7 +671,7 @@ namespace daking {
             node->next_.store(thread_local_node_list, std::memory_order_seq_cst);
             thread_local_node_list = node;
             // DAKING_TSAN_ANNOTATE_RELEASE(node);
-            if (++Get_thread_local_node_size() >= thread_local_capacity) [[unlikely]] {
+            if (++Get_thread_local_node_size() >= thread_local_capacity) DAKING_UNLIKELY {
 				global_chunk_stack_.Push(thread_local_node_list);
                 thread_local_node_list = nullptr;
                 Get_thread_local_node_size() = 0;
