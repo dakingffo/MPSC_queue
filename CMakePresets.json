@@ -207,5 +207,28 @@
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     }
 
+  ],
+  
+  "buildPresets": [
+    {
+      "name": "linux-gcc-release",
+      "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "linux-clang-release",
+      "configurePreset": "linux-clang-release"
+    },
+    {
+      "name": "linux-clang-release-asan",
+      "configurePreset": "linux-clang-release-asan"
+    },
+    {
+      "name": "linux-clang-release-tsan",
+      "configurePreset": "linux-clang-release-tsan"
+    },
+    {
+      "name": "msvc-x64-release",
+      "configurePreset": "msvc-x64-release"
+    }
   ]
 }
