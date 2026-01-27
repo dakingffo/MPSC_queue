@@ -150,7 +150,7 @@ BM_MPSC_PureEnqueueLatency/16      0.618 us        0.196 us     11219862 P99.9_n
 BM_MPSC_PureDequeueLatency          21.9 us         20.3 us        34313 P99.9_ns=20.0401 P99_ns=10.02
 
 moodycamel:  
-moodycamel ConcurrentQueue is a MPMC queue, so this comparion is unfair.
+moodycamel ConcurrentQueue is a MPMC queue, so this comparison is unfair.
 Run on (16 X 3992 MHz CPU s)
 CPU Caches:
   L1 Data 32 KiB (x8)

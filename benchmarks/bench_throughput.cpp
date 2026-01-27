@@ -210,7 +210,7 @@ BM_MPSC_Throughput_Bulk/8/min_warmup_time:2.000/real_time                 603418
 BM_MPSC_Throughput_Bulk/16/min_warmup_time:2.000/real_time                619393900 ns        0.000 ns            1 items_per_second=161.448M/s P=16, C=1
 
 moodycamel:  
-moodycamel ConcurrentQueue is a MPMC queue, so this comparion is unfair.
+moodycamel ConcurrentQueue is a MPMC queue, so this comparison is unfair.
 Run on (16 X 3992 MHz CPU s)
 CPU Caches:
   L1 Data 32 KiB (x8)
