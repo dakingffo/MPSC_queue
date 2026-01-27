@@ -642,18 +642,18 @@ namespace daking {
                     Reserve_global_internal();
 				}
             }
-            DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list);
-            DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list->next_);
-            Node* res = std::exchange(thread_local_node_list, thread_local_node_list->next_.load(std::memory_order_relaxed));
+            // DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list);
+            // DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list->next_);
+            Node* res = std::exchange(thread_local_node_list, thread_local_node_list->next_.load(std::memory_order_seq_cst));
             res->next_.store(nullptr, std::memory_order_relaxed);
             return res;
         }
 
         DAKING_ALWAYS_INLINE void Deallocate(Node* node) noexcept {
             Node*& thread_local_node_list = Get_thread_local_node_list();
-            node->next_.store(thread_local_node_list, std::memory_order_relaxed);
+            node->next_.store(thread_local_node_list, std::memory_order_seq_cst);
             thread_local_node_list = node;
-            DAKING_TSAN_ANNOTATE_RELEASE(node);
+            // DAKING_TSAN_ANNOTATE_RELEASE(node);
             if (++Get_thread_local_node_size() >= thread_local_capacity) [[unlikely]] {
 				global_chunk_stack_.Push(thread_local_node_list);
                 thread_local_node_list = nullptr;

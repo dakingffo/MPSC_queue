@@ -1,0 +1,90 @@
+name: Multi-Arch CI Pipeline
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  spell-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for Typos
+        uses: codespell-project/actions-codespell@v2
+        with:
+          ignore_words_list: "mpsc,daking,hdr"
+          skip: "./.git,./out,./build"
+
+  # Linux (x86_64 ARM64)
+  build-linux:
+    needs: spell-check
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        preset: [
+          "linux-clang-release-asan", 
+          "linux-clang-release-tsan", 
+          "linux-gcc-release", 
+          "linux-clang-release"
+        ]
+        include:
+          - arch: x64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm64
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang g++
+
+      - name: Configure CMake
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Run Runtime Checks
+        shell: bash
+        env:
+          ASAN_OPTIONS: 'halt_on_error=1'
+          TSAN_OPTIONS: 'halt_on_error=1'
+        run: |
+          cd out/build/${{ matrix.preset }}
+          echo ">>> [${{ matrix.arch }}] Running Tests"
+          ./mpsc_tests
+          
+          echo ">>> [${{ matrix.arch }}] Running Log System"
+          ./mpsc_log_system_example
+          
+          echo ">>> [${{ matrix.arch }}] Running Command Dispatcher"
+          ./mpsc_command_dispatcher_example
+
+  # MSVC (x86_64)
+  build-windows:
+    needs: spell-check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Install Ninja
+        run: choco install ninja
+      - name: Configure and Build
+        run: |
+          cmake --preset msvc-x64-release
+          cmake --build --preset msvc-x64-release
+      - name: Run Tests
+        shell: pwsh
+        run: |
+          cd out/build/msvc-x64-release
+          ./mpsc_tests.exe
+          ./mpsc_log_system_example.exe
+          ./mpsc_command_dispatcher_example.exe
