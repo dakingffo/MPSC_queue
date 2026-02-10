@@ -1,5 +1,3 @@
-#if defined(__x86_64__) || defined(__i386__)
-
 #include "MPSC_queue.hpp" 
 // #include <moodycamel/concurrentqueue.h>
 #include <benchmark/benchmark.h>
@@ -8,6 +6,9 @@
 #include <atomic>
 #include <vector>
 #include <cstdio>
+#include <iostream>
+
+#if defined(__x86_64__) || defined(__i386__)
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
