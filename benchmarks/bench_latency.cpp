@@ -1,3 +1,5 @@
+#if defined(__x86_64__) || defined(__i386__)
+
 #include "MPSC_queue.hpp" 
 // #include <moodycamel/concurrentqueue.h>
 #include <benchmark/benchmark.h>
@@ -167,3 +169,12 @@ BM_MPSC_PureEnqueueLatency/8       0.132 us        0.121 us     10000000 P99.9_n
 BM_MPSC_PureEnqueueLatency/16      0.736 us        0.328 us      2836924 P99.9_ns=11.3985k P99_ns=300.601
 BM_MPSC_PureDequeueLatency          25.4 us         23.5 us        28047 P99.9_ns=20.0401 P99_ns=20.0401
 */
+
+#else
+
+int main(int argc, char** argv) {
+    std::cout << "This test is only for x86." << std::endl;
+    return 0;
+}
+
+#endif
