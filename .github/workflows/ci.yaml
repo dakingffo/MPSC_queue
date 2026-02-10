@@ -17,6 +17,7 @@ jobs:
           ignore_words_list: "mpsc,daking,hdr"
           skip: "./.git,./out,./build"
 
+  # Linux (x86_64 & ARM64)
   build-linux:
     needs: spell-check
     runs-on: ubuntu-latest
@@ -38,7 +39,7 @@ jobs:
         if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
 
-      - name: [x64] 
+      - name: "[x64] Install Tools & Build"
         if: matrix.arch == 'x64'
         run: |
           sudo apt-get update && sudo apt-get install -y ninja-build clang g++
@@ -49,10 +50,9 @@ jobs:
           ./mpsc_log_system_example
           ./mpsc_command_dispatcher_example
 
-      - name: [arm64] 
+      - name: "[arm64] Build and Test in Container"
         if: matrix.arch == 'arm64'
         run: |
-          # 我们使用 arm64 架构的 Ubuntu 镜像
           docker run --rm --platform linux/arm64/v8 \
             -v ${{ github.workspace }}:/src \
             -w /src \
@@ -69,6 +69,7 @@ jobs:
               ./mpsc_command_dispatcher_example
             "
 
+  # MSVC (x86_64)
   build-windows:
     needs: spell-check
     runs-on: windows-latest
