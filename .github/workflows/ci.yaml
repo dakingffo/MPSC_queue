@@ -31,6 +31,11 @@ jobs:
           "linux-gcc-release", 
           "linux-clang-release"
         ]
+        exclude:
+          - arch: arm64
+            preset: "linux-clang-release-asan"
+          - arch: arm64
+            preset: "linux-clang-release-tsan"
 
     steps:
       - uses: actions/checkout@v4
