@@ -59,7 +59,7 @@ jobs:
             -e ASAN_OPTIONS='halt_on_error=1' \
             -e TSAN_OPTIONS='halt_on_error=1' \
             arm64v8/ubuntu:24.04 /bin/bash -c "
-              apt-get update && apt-get install -y ninja-build clang g++ cmake
+              apt-get update && apt-get install -y ninja-build clang g++ cmake libstdc++-dev
               cmake --preset ${{ matrix.preset }}
               cmake --build --preset ${{ matrix.preset }}
               cd out/build/${{ matrix.preset }}
