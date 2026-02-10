@@ -56,16 +56,26 @@ jobs:
           docker run --rm --platform linux/arm64/v8 \
             -v ${{ github.workspace }}:/src \
             -w /src \
+            -e DEBIAN_FRONTEND=noninteractive \
             -e ASAN_OPTIONS='halt_on_error=1' \
             -e TSAN_OPTIONS='halt_on_error=1' \
             arm64v8/ubuntu:24.04 /bin/bash -c "
-              apt-get update && apt-get install -y ninja-build clang g++ cmake libstdc++-dev
-              cmake --preset ${{ matrix.preset }}
-              cmake --build --preset ${{ matrix.preset }}
-              cd out/build/${{ matrix.preset }}
-              echo '>>> Running ARM64 Tests'
-              ./mpsc_tests
-              ./mpsc_log_system_example
+              apt-get update && \
+              apt-get install -y --no-install-recommends \
+                build-essential \
+                ninja-build \
+                clang \
+                cmake && \
+              
+              cmake --version && \
+              
+              cmake --preset ${{ matrix.preset }} && \
+              cmake --build --preset ${{ matrix.preset }} && \
+              
+              cd out/build/${{ matrix.preset }} && \
+              echo '>>> Running ARM64 Tests' && \
+              ./mpsc_tests && \
+              ./mpsc_log_system_example && \
               ./mpsc_command_dispatcher_example
             "
 
