@@ -1,10 +1,11 @@
-#include "daking/MPSC_queue.hpp" 
 #include <benchmark/benchmark.h>
 #include <thread>
 #include <vector>
 #include <atomic>
 #include <cassert>
 #include <iostream>
+
+#include "daking/MPSC_queue.hpp" 
 
 #if DAKING_HAS_CXX20_OR_ABOVE
 

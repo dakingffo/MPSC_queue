@@ -1,12 +1,15 @@
-#include "daking/MPSC_queue.hpp" 
-// #include <moodycamel/concurrentqueue.h>
 #include <benchmark/benchmark.h>
-#include <hdr/hdr_histogram.h>
+
 #include <thread>
 #include <atomic>
 #include <vector>
 #include <cstdio>
 #include <iostream>
+
+#include <hdr/hdr_histogram.h>
+
+#include "daking/MPSC_queue.hpp" 
+// #include <moodycamel/concurrentqueue.h>
 
 #if defined(__x86_64__) || defined(__i386__)
 

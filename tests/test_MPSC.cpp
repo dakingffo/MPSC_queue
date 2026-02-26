@@ -1,10 +1,12 @@
 #include "gtest/gtest.h"
-#include "daking/MPSC_queue.hpp"
+
 #include <thread>
 #include <vector>
 #include <numeric>
 #include <algorithm>
 #include <future>
+
+#include "daking/MPSC_queue.hpp"
 
 using daking::MPSC_queue;
 

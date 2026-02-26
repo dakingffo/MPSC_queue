@@ -1,4 +1,3 @@
-#include "daking/MPSC_queue.hpp" 
 #include <iostream>
 #include <fstream>
 #include <thread>
@@ -11,6 +10,8 @@
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
+
+#include "daking/MPSC_queue.hpp" 
 
 using namespace daking;
 
