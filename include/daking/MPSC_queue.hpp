@@ -42,6 +42,12 @@ SOFTWARE.
 #           define DAKING_TSAN_ANNOTATE_IGNORED(mem, size, desc) AnnotateBenignRaceSized(__FILE__, __LINE__, mem, size, desc)
 #           define DAKING_TSAN_ANNOTATE_ACQUIRE(mem) __tsan_acquire(mem)
 #           define DAKING_TSAN_ANNOTATE_RELEASE(mem) __tsan_release(mem)
+#       else
+#           define DAKING_HAS_TSAN 0
+#           define DAKING_NO_TSAN
+#           define DAKING_TSAN_ANNOTATE_IGNORED(mem, size, desc)
+#           define DAKING_TSAN_ANNOTATE_ACQUIRE(mem)
+#           define DAKING_TSAN_ANNOTATE_RELEASE(mem)
 #       endif
 #   else
 #       define DAKING_HAS_TSAN 0
