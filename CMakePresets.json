@@ -180,21 +180,6 @@
     },
 
     {
-      "name": "linux-clang-release-asan",
-      "displayName": "Linux Clang Release (ASan)",
-      "description": "Linux/WSL Clang Release，启用 Address Sanitizer",
-      "inherits": [ "linux-clang-base", "linux-asan-base" ],
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
-    },
-    {
-      "name": "linux-clang-release-tsan",
-      "displayName": "Linux Clang Release (TSan)",
-      "description": "Linux/WSL Clang Release，启用 Thread Sanitizer",
-      "inherits": [ "linux-clang-base", "linux-tsan-base" ],
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
-    },
-
-    {
       "name": "linux-clang-debug",
       "displayName": "Linux Clang Debug",
       "inherits": "linux-clang-base",
@@ -205,8 +190,40 @@
       "displayName": "Linux Clang Release",
       "inherits": "linux-clang-base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "linux-clang-relwithstack",
+      "displayName": "Linux Clang RelWithPerf ",
+      "description": "Release 优化级别，但保留调试符号和完整的调用堆栈。",
+      "inherits": "linux-clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "-O3 -g -fno-omit-frame-pointer $env{CMAKE_CXX_FLAGS}",
+        "CMAKE_C_FLAGS": "-O3 -g -fno-omit-frame-pointer $env{CMAKE_C_FLAGS}"
+      }
+    },
+    {
+      "name": "linux-clang-relwithstack-tsan",
+      "displayName": "Linux Clang RelWithPerf (TSAN)",
+      "description": "Release 优化级别，但保留调试符号和完整的调用堆栈，启用 Thread Sanitizer",
+      "inherits": [ "linux-clang-base", "linux-tsan-base" ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "-O3 -g -fsanitize=thread -fno-omit-frame-pointer $env{CMAKE_CXX_FLAGS}",
+        "CMAKE_C_FLAGS": "-O3 -g -fsanitize=thread -fno-omit-frame-pointer $env{CMAKE_C_FLAGS}"
+      }
+    },
+    {
+      "name": "linux-clang-relwithstack-asan",
+      "displayName": "Linux Clang RelWithPerf (ASAN)",
+      "description": "Release 优化级别，但保留调试符号和完整的调用堆栈，启用 Address Sanitizer",
+      "inherits": [ "linux-clang-base", "linux-asan-base" ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "-O3 -g -fsanitize=address -fno-omit-frame-pointer $env{CMAKE_CXX_FLAGS}",
+        "CMAKE_C_FLAGS": "-O3 -g -fsanitize=address -fno-omit-frame-pointer $env{CMAKE_C_FLAGS}"
+      }
     }
-
   ],
   
   "buildPresets": [
@@ -219,16 +236,20 @@
       "configurePreset": "linux-clang-release"
     },
     {
-      "name": "linux-clang-release-asan",
-      "configurePreset": "linux-clang-release-asan"
+      "name": "linux-clang-relwithstack-asan",
+      "configurePreset": "linux-clang-relwithstack-asan"
     },
     {
-      "name": "linux-clang-release-tsan",
-      "configurePreset": "linux-clang-release-tsan"
+      "name": "linux-clang-relwithstack-tsan",
+      "configurePreset": "linux-clang-relwithstack-tsan"
     },
     {
       "name": "msvc-x64-release",
       "configurePreset": "msvc-x64-release"
+    },
+    {
+      "name": "linux-clang-relwithstack",
+      "configurePreset": "linux-clang-relwithstack"
     }
   ]
 }
