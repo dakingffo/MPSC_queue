@@ -31,16 +31,18 @@ SOFTWARE.
 
 
 #ifndef DAKING_HAS_TSAN
-#   if defined(__SANITIZE_THREAD__)
-#       include <sanitizer/tsan_interface.h>
-        extern "C" {
-            void AnnotateBenignRaceSized(const char* f, int l, const volatile void* mem, unsigned int size, const char* desc);
-        }
-#       define DAKING_HAS_TSAN 1
-#       define DAKING_NO_TSAN __attribute__((no_sanitize("thread")))
-#       define DAKING_TSAN_ANNOTATE_IGNORED(mem, size, desc) AnnotateBenignRaceSized(__FILE__, __LINE__, mem, size, desc)
-#       define DAKING_TSAN_ANNOTATE_ACQUIRE(mem) __tsan_acquire(mem)
-#       define DAKING_TSAN_ANNOTATE_RELEASE(mem) __tsan_release(mem)
+#   if defined(__has_feature)
+#       if __has_feature(thread_sanitizer)
+#           include <sanitizer/tsan_interface.h>
+            extern "C" {
+                void AnnotateBenignRaceSized(const char* f, int l, const volatile void* mem, unsigned int size, const char* desc);
+            }
+#           define DAKING_HAS_TSAN 1
+#           define DAKING_NO_TSAN __attribute__((no_sanitize("thread")))
+#           define DAKING_TSAN_ANNOTATE_IGNORED(mem, size, desc) AnnotateBenignRaceSized(__FILE__, __LINE__, mem, size, desc)
+#           define DAKING_TSAN_ANNOTATE_ACQUIRE(mem) __tsan_acquire(mem)
+#           define DAKING_TSAN_ANNOTATE_RELEASE(mem) __tsan_release(mem)
+#       endif
 #   else
 #       define DAKING_HAS_TSAN 0
 #       define DAKING_NO_TSAN
