@@ -31,7 +31,7 @@ SOFTWARE.
 
 
 #ifndef DAKING_HAS_TSAN
-#   if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+#   if defined(__SANITIZE_THREAD__)
 #       include <sanitizer/tsan_interface.h>
         extern "C" {
             void AnnotateBenignRaceSized(const char* f, int l, const volatile void* mem, unsigned int size, const char* desc);
