@@ -31,66 +31,96 @@ flowchart TD
     classDef QUEUE fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
 
     subgraph PRODUCERS [MP]
-        P1[P1: Enqueue]
-        P2[P2: Enqueue]
+        P1[/P1: Enqueue/]
+        ControlBlock_P1 -.-> P1
+        P2[/P2: Enqueue/]
+        ControlBlock_P2 -.-> P2
+        P3[/P3: Enqueue/]
+        ControlBlock_P3 -.-> P3
     end
     class PRODUCERS THREAD
 
     subgraph CONSUMER [SC]
-        C[SC: Dequeue]
+        C[\C: Dequeue\]
+        C -.-> ControlBlock_C
     end
     class CONSUMER THREAD
 
     subgraph MPSC_QUEUE [Queue Instance]
-        direction LR
-        Head
-        Tail
-        Tail --> NodeA[Node]
-        NodeA --> NodeB[Node]
-        NodeB --> Head
+        subgraph CONSUMER_VISIBLE [Consumer Visible]
+            Tail(tail) -.-> NodeA(node)
+            subgraph PRODUCER_VISIBLE [Producer Visible]
+                NodeA --> NodeB(Node)
+                NodeB --> NodeC(Node)
+                NodeC --> NodeD(Node)
+                NodeD --> NodeE(Node)
+                NodeE --> NodeF(Node)
+                NodeF --> NodeG(Node)
+                NodeG --> NodeH(Node)
+                NodeH --> Head(head)
+            end
+        end 
     end
     class MPSC_QUEUE QUEUE
 
+    subgraph GLOBAL_MANAGER [Global Manager]
+        Note1[really malloc/free here]:::note
+        ControlBlockMap 
+        Page1[Page] --> Page2[Page]
+    end
+    classDef note fill:none, stroke:none;
+    class GLOBAL_MANAGER manager
+
     subgraph THREAD_LOCAL_NODE_POOL [Static Node Pool]
-        subgraph THREAD_LOCAL_CACHE [thead_local Dmitry Vyukov]
+        subgraph THREAD_LOCAL_CACHE [theard_local]
             direction TB
             LocalChunk_P1
             LocalChunk_P2
+            LocalChunk_P3
             LocalChunk_C
         end
 
         subgraph GLOBAL_NODE_POOL [global chunk stack]
             GlobalStackTop[Tagged Pointer]
-            GlobalMutex[Page]
+            GlobalStackBottom(NULL)
             NextChunk1
             NextChunk2
         end
     end
     class NODE_ALLOCATOR GLOBAL
 
-    P1 --> Head
-    P2 --> Head
-    C --> Tail
+    P1 -- "Preempt" --> Head
+    P2 -- "Preempt" --> Head
+    P3 -- "Preempt" --> Head
+    NodeA -- "Consume" --> C
+    C -.-> Tail
 
-    P1 -.-> LocalChunk_P1
-    LocalChunk_P1 -- "Miss: Pop Chunk O(1)" -->GlobalStackTop
-    P2 -.-> LocalChunk_P2
-    LocalChunk_P2 -- "Miss: Pop Chunk O(1)" --> GlobalStackTop
-    C -.-> LocalChunk_C
-    LocalChunk_C -- "Recycle: Push Chunk O(1)" --> GlobalStackTop
+    ControlBlockMap --> ControlBlock_C
+    ControlBlockMap --> ControlBlock_P1
+    ControlBlockMap --> ControlBlock_P2
+    ControlBlockMap --> ControlBlock_P3
+
+    LocalChunk_P1 -.-> ControlBlock_P1
+    GlobalStackTop -- "Pop Chunk O(1)" --> LocalChunk_P1
+    LocalChunk_P2 -.-> ControlBlock_P2
+    GlobalStackTop -- "Pop Chunk O(1)" --> LocalChunk_P2
+    LocalChunk_P3 -.-> ControlBlock_P3
+    GlobalStackTop -- "Pop Chunk O(1)" --> LocalChunk_P3
+    ControlBlock_C -.-> LocalChunk_C
+    LocalChunk_C -- "Push Chunk O(1)" --> GlobalStackTop
     
     GlobalStackTop --> NextChunk1
     NextChunk1 --> NextChunk2
-    NextChunk2 -- "Empty: Request Page" --> GlobalMutex
+    NextChunk2 -- "Empty: Request Page" --> GlobalStackBottom
 ```
 
 
-由于利用全局块栈以`chunk`为单位进行O(1)分配线程本地队列的特点，在**SPSClike**场景下生产者和消费者的线程本地队列有很大机会借由栈实现高效复用。
+由于全局块栈以`chunk`为单位分配线程本地队列的特点，在**SPSClike**场景下生产者和消费者的线程本地队列有很大机会借由栈实现高效复用。
 在多生产者均匀竞争的场景下，受限于链表结构的限制，持续的`enqueue`操作会导致对于链表头频繁的CAS竞争，这会触及本队列的性能底线。
 因此，`daking::MPSC_queue`适用于：
 1. **非均匀生产和消息突发的场景**，也就是适合于“生产者非均匀地爆发洪峰”的场景。
 这将极大的降低MPSC的CAS竞争，将吞吐量快速拉回类似SPSC场景的表现。
-2. **生产者有批量入队行为的场景**，也就是生产者存在生产的聚合操作或拥有一个写入缓冲区并将批量入队的场景。
+1. **生产者有批量入队行为的场景**，也就是生产者存在生产的聚合操作或拥有一个写入缓冲区并将批量入队的场景。
 这是因为`daking::MPSC_queue:enqueue_bulk`会先使用高效的thread_local操作地把数据连接成一个链表段，然后只发生一次CAS将这段节点合并进队列。
 下面的性能测试证明了这两点。
 
