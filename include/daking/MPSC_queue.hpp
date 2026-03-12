@@ -666,11 +666,14 @@ namespace daking {
 
         DAKING_ALWAYS_INLINE node_t* _allocate() {
             node_t*& thread_local_node_list = _get_thread_local_node_list();
-            if (!thread_local_node_list) DAKING_UNLIKELY {
+            size_type& thread_local_node_size = _get_thread_local_node_size();
+            if (thread_local_node_size == 0) DAKING_UNLIKELY {
                 while (!global_chunk_stack_.try_pop(thread_local_node_list)) {
                     _reserve_global_internal();
 				}
+                thread_local_node_size = thread_local_capacity;
             }
+            thread_local_node_size--;
             DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list);
             DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list->next_);
             node_t* res = std::exchange(thread_local_node_list, thread_local_node_list->next_.load(std::memory_order_relaxed));
