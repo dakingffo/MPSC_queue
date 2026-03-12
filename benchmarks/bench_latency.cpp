@@ -175,6 +175,8 @@ BM_MPSC_PureDequeueLatency          25.4 us         23.5 us        28047 P99.9_n
 
 #else
 
+#include <iostream>
+
 int main(int argc, char** argv) {
     std::cout << "This test is only for x86." << std::endl;
     return 0;
