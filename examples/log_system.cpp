@@ -6,7 +6,6 @@
 #include <vector>
 #include <cstring>
 #include <atomic>
-#include <algorithm>
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>

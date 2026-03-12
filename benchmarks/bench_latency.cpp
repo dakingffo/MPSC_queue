@@ -4,7 +4,6 @@
 #include <atomic>
 #include <vector>
 #include <cstdio>
-#include <iostream>
 
 #include <hdr/hdr_histogram.h>
 
