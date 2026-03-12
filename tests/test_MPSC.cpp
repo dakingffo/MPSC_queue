@@ -4,11 +4,11 @@
 #include <vector>
 #include <numeric>
 #include <algorithm>
-#include <future>
 
 #include "daking/MPSC_queue.hpp"
 
 using daking::MPSC_queue;
+using daking::low_jitter;
 
 // Use default template parameters for testing
 using TestQueue = MPSC_queue<int>;
@@ -21,7 +21,7 @@ using StringQueue = MPSC_queue<std::string>;
 TEST(MPSCQueueBasicTest, InitialStateAndEmptyCheck) {
 	TestQueue queue;
 	EXPECT_TRUE(queue.empty());
-	EXPECT_EQ(TestQueue::global_node_size_apprx(), 256); // ThreadLocalCapacity default is 256
+	EXPECT_EQ(queue.global_node_size_apprx(), 256); // ThreadLocalCapacity default is 256
 }
 
 TEST(MPSCQueueBasicTest, EnqueueAndTryDequeueSingle) {
@@ -63,38 +63,35 @@ TEST(MPSCQueueBasicTest, EmplaceMove) {
 
 TEST(MPSCQueueMemoryTest, GlobalResourceSharingAndDestruction) {
 	// Two instances with the same template parameters share global resources
-	MPSC_queue<double, 128>* q1 = new MPSC_queue<double, 128>();
-	MPSC_queue<double, 128>* q2 = new MPSC_queue<double, 128>();
+	auto* q1 = new MPSC_queue<double, low_jitter<128>>();
+	auto* q2 = new MPSC_queue<double, low_jitter<128>>();
 
-	// The current thread now has 126 free nodes, q1 and q2 each have one dummy node
-
-	// Pre-allocate some global nodes
-	MPSC_queue<double, 128>::reserve_global_chunk(5);
-	size_t initial_global_size = MPSC_queue<double, 128>::global_node_size_apprx();
-	EXPECT_GE(initial_global_size, (size_t)5 * 128);
+	// Allocate some global nodes
+	q1->reserve_global_chunk(5);
+	size_t initial_global_size = q1->global_node_size_apprx();
+	EXPECT_EQ(initial_global_size, (size_t)5 * 128);
 
 	delete q1;
-	size_t after_delete_size = MPSC_queue<double, 128>::global_node_size_apprx();
+	size_t after_delete_size = q2->global_node_size_apprx();
 	// q2 still exists, global resources should not be released
-	EXPECT_GE(after_delete_size, (size_t)initial_global_size);
+	EXPECT_EQ(after_delete_size, (size_t)initial_global_size);
 
 	delete q2;
-	after_delete_size = MPSC_queue<double, 128>::global_node_size_apprx();
-	// The last instance is destructed, global resources should be released
-	EXPECT_EQ(after_delete_size, (size_t)0);
 }
 
 TEST(MPSCQueueMemoryTest, ReserveGlobalChunk) {
-	using Q = MPSC_queue<long, 64>;
-	size_t initial_size = Q::global_node_size_apprx(); // Initial value is 0
+	using Q = MPSC_queue<long, low_jitter<64>>;
 	Q q; // Create an instance to register global manager
-	Q::reserve_global_chunk(10); // Reserve 10 * 64 nodes
-	size_t reserved_size = Q::global_node_size_apprx();
-	EXPECT_GE(reserved_size, initial_size + 10 * 64);
+	size_t initial_size = q.global_node_size_apprx();
+	EXPECT_EQ(initial_size, 64);
+
+	q.reserve_global_chunk(10); // Reserve to 10 * 64 nodes
+	size_t reserved_size = q.global_node_size_apprx();
+	EXPECT_EQ(reserved_size, 10 * 64);
 
 	// Reserve again, but with a smaller number, should not allocate
-	Q::reserve_global_chunk(5);
-	EXPECT_EQ(Q::global_node_size_apprx(), reserved_size);
+	q.reserve_global_chunk(5);
+	EXPECT_EQ(q.global_node_size_apprx(), reserved_size);
 }
 
 // -------------------------------------------------------------------------
@@ -230,7 +227,7 @@ struct CountingAllocator : Counter {
 };
 
 TEST(MPSCQueueAllocatorTest, CustomAllocatorUsage) {
-	using AllocQueue = MPSC_queue<int, 256, 64, CountingAllocator<int>>;
+	using AllocQueue = MPSC_queue<int, low_jitter<256, 64>, CountingAllocator<int>>;
 	AllocQueue* queue = new AllocQueue();
 	const size_t n = 1000;
 	for (size_t i = 0; i < n; ++i) {
