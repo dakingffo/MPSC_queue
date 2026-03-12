@@ -111,7 +111,7 @@ namespace daking {
 
             union {
                 value_type       value_;
-                MPSC_node*       next_chunk_; // for low_jitter
+                MPSC_node*       next_chunk_; // for stable
             };
             std::atomic<node_t*> next_;
         };
@@ -177,7 +177,7 @@ namespace daking {
                     }
                     new_top.node_ = old_top.node_->next_chunk_;
                     new_top.tag_ = old_top.tag_ + 1;
-                    // For low_jitter pattern:
+                    // For stable pattern:
                     // If TA and TB reach here at the same time
                     // And A pop the chunk successfully, then it will construct object at old_top.node_->next_chunk_, 
                     // so that B will read a invalid value, but this value will not pass the next CAS.(old_top have been updated by A)
@@ -201,15 +201,16 @@ namespace daking {
             std::size_t Align               = 64, /* std::hardware_destructive_interference_size */
             std::size_t ExpansionFactor     = 2
         >
-        struct low_jitter {
-            static_assert((ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2.");
+        struct stable {
+            static_assert(ThreadLocalCapacity && (ThreadLocalCapacity & (ThreadLocalCapacity - 1)) == 0, "ThreadLocalCapacity must be a power of 2.");
+            static_assert(ExpansionFactor > 1, "ExpansionFactor must be greater than 1.");
             static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
             static constexpr std::size_t align                 = Align;
             static constexpr std::size_t expansion_factor      = ExpansionFactor;
         };
 
         template <typename Ty, typename LowJitter, typename Alloc>
-        struct MPSC_low_jitter_impl : public std::allocator_traits<Alloc>::template rebind_alloc<MPSC_node<Ty>> {
+        struct MPSC_stable_impl : public std::allocator_traits<Alloc>::template rebind_alloc<MPSC_node<Ty>> {
             using value_type = Ty;
             using size_type  = std::size_t;
 
@@ -234,11 +235,11 @@ namespace daking {
 
             struct thread_hook_t {
                 thread_hook_t() {
-                    control_block_ = MPSC_low_jitter_impl::get_global_manager().get_control_block();
+                    control_block_ = MPSC_stable_impl::get_global_manager().get_control_block();
                 }
 
                 ~thread_hook_t() {
-                    MPSC_low_jitter_impl::get_global_manager().return_control_block(control_block_);
+                    MPSC_stable_impl::get_global_manager().return_control_block(control_block_);
                 }
 
                 DAKING_ALWAYS_INLINE node_t*& node_list() noexcept {
@@ -259,7 +260,7 @@ namespace daking {
                 using alloc_page_t            = typename std::allocator_traits<Alloc>::template rebind_alloc<page_t>;
                 using altraits_page_t         = std::allocator_traits<alloc_page_t>;
                 
-                // meta datas use new/delete
+                // new/delete meta data
                 using control_block_page_t     = MPSC_page<control_block_t>;
                 using control_block_recycler_t = MPSC_chunk_stack<control_block_t>;
 
@@ -296,12 +297,12 @@ namespace daking {
 
                     for (size_type i = 0; i < count; i++) {
                         new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
-                        if ((i & (MPSC_low_jitter_impl::thread_local_capacity - 1)) == MPSC_low_jitter_impl::thread_local_capacity - 1) DAKING_UNLIKELY {
+                        if ((i & (MPSC_stable_impl::thread_local_capacity - 1)) == MPSC_stable_impl::thread_local_capacity - 1) DAKING_UNLIKELY {
                             // chunk_count = count / ThreadLocalCapacity
                             new_nodes[i].next_ = nullptr;
                             std::atomic_thread_fence(std::memory_order_acq_rel);
                             // mutex don't protect global_chunk_stack_
-                            MPSC_low_jitter_impl::global_chunk_stack_.push(&new_nodes[i - MPSC_low_jitter_impl::thread_local_capacity + 1]);
+                            MPSC_stable_impl::global_chunk_stack_.push(&new_nodes[i - MPSC_stable_impl::thread_local_capacity + 1]);
                         }
                     }
 
@@ -309,7 +310,7 @@ namespace daking {
                 }
 
                 DAKING_ALWAYS_INLINE control_block_t* allocate_control_block() {
-                    std::lock_guard guard(MPSC_low_jitter_impl::global_mutex_);
+                    std::lock_guard guard(MPSC_stable_impl::global_mutex_);
                     control_block_t* control_block = new control_block_t();
                     control_block_page_t* new_page = new control_block_page_t(control_block, 1, global_control_block_page_list_);
                     global_control_block_page_list_ = new_page;
@@ -349,20 +350,20 @@ namespace daking {
             using altraits_page_t = typename manager_t::altraits_page_t;
 
             static_assert(std::is_empty_v<Alloc>, 
-                "In the low_jitter global manager design, Alloc must be stateless to avoid dangling references. "
+                "In the stable global manager design, Alloc must be stateless to avoid dangling references. "
             );
             static_assert(
                 std::is_constructible_v<alloc_node_t, Alloc> && std::is_constructible_v<alloc_page_t, Alloc>,        
                 "Alloc should have a template constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
             );
 
-            MPSC_low_jitter_impl(const Alloc& alloc) : alloc_node_t(alloc) {
+            MPSC_stable_impl(const Alloc& alloc) : alloc_node_t(alloc) {
                 global_instance_count_++;
                 std::lock_guard<std::mutex> guard(global_mutex_);
                 global_manager_instance_ = manager_t::create_global_manager(alloc); // single instance
             }
 
-            ~MPSC_low_jitter_impl() {
+            ~MPSC_stable_impl() {
                 if (--global_instance_count_ == 0) {
                     // only the last instance free the global resource
                     std::lock_guard<std::mutex> lock(global_mutex_);
@@ -442,8 +443,10 @@ namespace daking {
                     // if anyone have already allocate chunks, I return.
                     return;
                 }
-
-                get_global_manager().reserve(std::max(thread_local_capacity, get_global_manager().node_count()), *this);
+                
+                constexpr size_type mask = thread_local_capacity - 1;
+                size_type count = (expansion_factor - 1) * get_global_manager().node_count();
+                get_global_manager().reserve(std::max(thread_local_capacity, count), *this);
             }
 
             DAKING_ALWAYS_INLINE void free_global() {
@@ -473,18 +476,18 @@ namespace daking {
         struct MPSC_base;
 
         template <typename Ty, std::size_t...Args, typename Alloc>
-        struct MPSC_base<Ty, low_jitter<Args...>, Alloc> 
-            : MPSC_low_jitter_impl<Ty, low_jitter<Args...>, Alloc> {
-            using memory_policy = MPSC_low_jitter_impl<Ty, low_jitter<Args...>, Alloc>;
+        struct MPSC_base<Ty, stable<Args...>, Alloc> 
+            : MPSC_stable_impl<Ty, stable<Args...>, Alloc> {
+            using memory_policy = MPSC_stable_impl<Ty, stable<Args...>, Alloc>;
 
             MPSC_base(const Alloc& alloc) : memory_policy(alloc) {}
             ~MPSC_base() = default;
         };
     }
 
-    using detail::low_jitter;
+    using detail::stable;
     /*
-    low_jitter pattern will not free memory to OS at runtime, but have a stable jitter performance.
+    stable pattern will not free memory to OS at runtime, but have a stable jitter performance.
 
     In this mode:
 
@@ -536,7 +539,7 @@ namespace daking {
     
     template <
         typename Ty,                          
-        typename MemoryPolicy = low_jitter<>,
+        typename MemoryPolicy = stable<>,
         typename Alloc        = std::allocator<Ty>
     >
     class MPSC_queue : private detail::MPSC_base<Ty, MemoryPolicy, Alloc> {
