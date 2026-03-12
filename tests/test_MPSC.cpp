@@ -8,7 +8,7 @@
 #include "daking/MPSC_queue.hpp"
 
 using daking::MPSC_queue;
-using daking::low_jitter;
+using daking::stable;
 
 // Use default template parameters for testing
 using TestQueue = MPSC_queue<int>;
@@ -63,8 +63,8 @@ TEST(MPSCQueueBasicTest, EmplaceMove) {
 
 TEST(MPSCQueueMemoryTest, GlobalResourceSharingAndDestruction) {
 	// Two instances with the same template parameters share global resources
-	auto* q1 = new MPSC_queue<double, low_jitter<128>>();
-	auto* q2 = new MPSC_queue<double, low_jitter<128>>();
+	auto* q1 = new MPSC_queue<double, stable<128>>();
+	auto* q2 = new MPSC_queue<double, stable<128>>();
 
 	// Allocate some global nodes
 	q1->reserve_global_chunk(5);
@@ -80,7 +80,7 @@ TEST(MPSCQueueMemoryTest, GlobalResourceSharingAndDestruction) {
 }
 
 TEST(MPSCQueueMemoryTest, ReserveGlobalChunk) {
-	using Q = MPSC_queue<long, low_jitter<64>>;
+	using Q = MPSC_queue<long, stable<64>>;
 	Q q; // Create an instance to register global manager
 	size_t initial_size = q.global_node_size_apprx();
 	EXPECT_EQ(initial_size, 64);
@@ -227,7 +227,7 @@ struct CountingAllocator : Counter {
 };
 
 TEST(MPSCQueueAllocatorTest, CustomAllocatorUsage) {
-	using AllocQueue = MPSC_queue<int, low_jitter<256, 64>, CountingAllocator<int>>;
+	using AllocQueue = MPSC_queue<int, stable<256, 64>, CountingAllocator<int>>;
 	AllocQueue* queue = new AllocQueue();
 	const size_t n = 1000;
 	for (size_t i = 0; i < n; ++i) {
