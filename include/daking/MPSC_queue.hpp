@@ -411,9 +411,12 @@ namespace daking {
         using alloc_page_t    = typename manager_t::alloc_page_t;
         using altraits_page_t = typename manager_t::altraits_page_t;
 
+        static_assert(std::is_empty_v<allocator_type>, 
+            "In the global manager design, Alloc must be stateless to avoid dangling references. "
+        );
+
         static_assert(
-            std::is_constructible_v<alloc_node_t, allocator_type> &&  // for constructor of MPSC_manager
-            std::is_constructible_v<alloc_page_t, allocator_type>,        
+            std::is_constructible_v<alloc_node_t, allocator_type> && std::is_constructible_v<alloc_page_t, allocator_type>,        
             "Alloc should have a template constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
         );
 
