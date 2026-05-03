@@ -186,8 +186,64 @@ This scenario tests the throughput when producers use the `enqueue_bulk` interfa
 | **moodycamel** | **2** | **1** | **68.9161** | **Best performance in this section (P=2)** | |
 | moodycamel | 16 | 1 | 43.4848 | No bulk advantage at 16P |
 
+**Part IV: Additional Google Benchmark Comparison (Clang Release)**
 
-**Part IV: Enqueue/Dequeue Latency**
+This comparison is produced by `mpsc_vs_mpmc_benchmark`, using Google Benchmark in a Clang Release build. It uses `moodycamel::ConcurrentQueue` v1.0.5 as a generic MPMC baseline under the same MPSC workloads.
+
+Run on (20 X 2688 MHz CPU s)
+CPU Caches:
+L1 Data 48 KiB (x10)
+L1 Instruction 32 KiB (x10)
+L2 Unified 1280 KiB (x10)
+L3 Unified 24576 KiB (x1)
+Compiler: Clang 22.1.1 Release
+
+Command:
+
+```powershell
+cmake -S . -B out/build/clang-local -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+cmake --build out/build/clang-local --target mpsc_vs_mpmc_benchmark
+.\out\build\clang-local\mpsc_vs_mpmc_benchmark.exe --benchmark_min_time=0.1s --benchmark_repetitions=1 --benchmark_counters_tabular=true
+```
+
+Uniform single-element enqueue:
+
+| Queue | P (Producers) | C (Consumer) | **Throughput (M items/s)** |
+| :--- | :--- | :--- | :--- |
+| **daking** | 1 | 1 | **86.78** |
+| daking | 2 | 1 | **32.29** |
+| daking | 4 | 1 | **32.52** |
+| daking | 8 | 1 | 31.16 |
+| moodycamel | 1 | 1 | 22.74 |
+| moodycamel | 2 | 1 | 27.82 |
+| moodycamel | 4 | 1 | 29.79 |
+| **moodycamel** | 8 | 1 | **32.07** |
+
+Uneven sequential burst:
+
+| Queue | P (Producers) | C (Consumer) | Relay % | **Throughput (M items/s)** |
+| :--- | :--- | :--- | :--- | :--- |
+| daking | 4 | 1 | $50.0\%$ | **33.89** |
+| daking | 4 | 1 | $90.0\%$ | **61.72** |
+| daking | 4 | 1 | $98.0\%$ | **73.72** |
+| moodycamel | 4 | 1 | $50.0\%$ | 23.84 |
+| moodycamel | 4 | 1 | $90.0\%$ | 22.25 |
+| moodycamel | 4 | 1 | $98.0\%$ | 17.64 |
+
+Bulk enqueue:
+
+| Queue | P (Producers) | C (Consumer) | **Throughput (M items/s)** |
+| :--- | :--- | :--- | :--- |
+| **daking** | 1 | 1 | **102.25** |
+| **daking** | 2 | 1 | **102.37** |
+| **daking** | 4 | 1 | **85.23** |
+| **daking** | 8 | 1 | **77.16** |
+| moodycamel | 1 | 1 | 17.02 |
+| moodycamel | 2 | 1 | 18.85 |
+| moodycamel | 4 | 1 | 18.06 |
+| moodycamel | 8 | 1 | 16.02 |
+
+**Part V: Enqueue/Dequeue Latency**
 
 (Based on HdrHistogram, Test on Linux)
 We get below performance：

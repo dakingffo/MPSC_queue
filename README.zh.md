@@ -186,7 +186,64 @@ Compiler: MSVC -O2
 | **moodycamel** | **2** | **1** | **68.9161** | **本部分最高表现 (P=2)** |
 | moodycamel | 16 | 1 | 43.4848 | 16P时无明显批量优势 |
 
-**第四部分：Enqueue/Dequeue Latency**
+**第四部分：额外 Google Benchmark 对比（Clang Release）**
+
+此对比由 `mpsc_vs_mpmc_benchmark` 产生，使用 Google Benchmark 和 Clang Release 构建。这里将 `moodycamel::ConcurrentQueue` v1.0.5 作为通用 MPMC 基线，并在相同 MPSC 负载下进行对比。
+
+Run on (20 X 2688 MHz CPU s)
+CPU Caches:
+L1 Data 48 KiB (x10)
+L1 Instruction 32 KiB (x10)
+L2 Unified 1280 KiB (x10)
+L3 Unified 24576 KiB (x1)
+Compiler: Clang 22.1.1 Release
+
+运行命令：
+
+```powershell
+cmake -S . -B out/build/clang-local -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+cmake --build out/build/clang-local --target mpsc_vs_mpmc_benchmark
+.\out\build\clang-local\mpsc_vs_mpmc_benchmark.exe --benchmark_min_time=0.1s --benchmark_repetitions=1 --benchmark_counters_tabular=true
+```
+
+均匀单元素入队：
+
+| 队列 | P (生产者) | C (消费者) | **吞吐量 (M items/s)** |
+| :--- | :--- | :--- | :--- |
+| **daking** | 1 | 1 | **86.78** |
+| daking | 2 | 1 | **32.29** |
+| daking | 4 | 1 | **32.52** |
+| daking | 8 | 1 | 31.16 |
+| moodycamel | 1 | 1 | 22.74 |
+| moodycamel | 2 | 1 | 27.82 |
+| moodycamel | 4 | 1 | 29.79 |
+| **moodycamel** | 8 | 1 | **32.07** |
+
+不均匀顺序爆发：
+
+| 队列 | P (生产者) | C (消费者) | 接力百分比 | **吞吐量 (M items/s)** |
+| :--- | :--- | :--- | :--- | :--- |
+| daking | 4 | 1 | $50.0\%$ | **33.89** |
+| daking | 4 | 1 | $90.0\%$ | **61.72** |
+| daking | 4 | 1 | $98.0\%$ | **73.72** |
+| moodycamel | 4 | 1 | $50.0\%$ | 23.84 |
+| moodycamel | 4 | 1 | $90.0\%$ | 22.25 |
+| moodycamel | 4 | 1 | $98.0\%$ | 17.64 |
+
+批量入队：
+
+| 队列 | P (生产者) | C (消费者) | **吞吐量 (M items/s)** |
+| :--- | :--- | :--- | :--- |
+| **daking** | 1 | 1 | **102.25** |
+| **daking** | 2 | 1 | **102.37** |
+| **daking** | 4 | 1 | **85.23** |
+| **daking** | 8 | 1 | **77.16** |
+| moodycamel | 1 | 1 | 17.02 |
+| moodycamel | 2 | 1 | 18.85 |
+| moodycamel | 4 | 1 | 18.06 |
+| moodycamel | 8 | 1 | 16.02 |
+
+**第五部分：Enqueue/Dequeue Latency**
 
 (此部分基于HdrHistogram，在Linux平台测试)
 我们得到了以下延迟表现：
