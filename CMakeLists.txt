@@ -105,6 +105,20 @@ target_link_libraries(mpsc_bench_memory_cycle
 )
 target_compile_options(mpsc_bench_memory_cycle ${COMMON_TARGET_PROPERTIES})
 
+add_executable(mpsc_bench_reclaim benchmarks/bench_reclaim.cpp)
+target_include_directories(mpsc_bench_reclaim
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(mpsc_bench_reclaim
+    PRIVATE
+        benchmark::benchmark_main
+        Threads::Threads
+        ${ATOMIC_LIBRARY}
+)
+target_compile_options(mpsc_bench_reclaim ${COMMON_TARGET_PROPERTIES})
+
 add_executable(mpsc_bench_latency benchmarks/bench_latency.cpp)
 target_include_directories(mpsc_bench_latency 
     PRIVATE 
