@@ -94,6 +94,8 @@ SOFTWARE.
 #include <iterator>
 #include <utility>
 #include <atomic>
+#include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -197,6 +199,7 @@ namespace daking {
             size_type count_;
             node_t*   node_;
             page_t*   next_;
+            size_type reclaim_free_count_ = 0;
         };
 
         template <typename Queue>
@@ -388,27 +391,57 @@ namespace daking {
                     return 0;
                 }
 
-                std::vector<node_t*> free_nodes;
-                std::unordered_map<page_t*, size_type> free_by_page;
-
-                auto find_page_for = [&](node_t* free_node) {
-                    for (page_t* page = global_page_list_; page; page = page->next_) {
-                        if (free_node >= page->node_ && free_node < page->node_ + page->count_) {
-                            return page;
-                        }
-                    }
-                    return static_cast<page_t*>(nullptr);
+                struct page_range {
+                    std::uintptr_t begin_;
+                    std::uintptr_t end_;
+                    page_t* page_;
                 };
+
+                std::vector<page_range> page_ranges;
+                for (page_t* page = global_page_list_; page; page = page->next_) {
+                    page->reclaim_free_count_ = 0;
+                    const auto begin = reinterpret_cast<std::uintptr_t>(page->node_);
+                    page_ranges.push_back(page_range{
+                        begin,
+                        begin + sizeof(node_t) * page->count_,
+                        page
+                    });
+                }
+                std::sort(page_ranges.begin(), page_ranges.end(), [](const page_range& lhs, const page_range& rhs) {
+                    return lhs.begin_ < rhs.begin_;
+                });
+
+                auto find_page_for = [&](node_t* free_node) -> page_t* {
+                    const auto addr = reinterpret_cast<std::uintptr_t>(free_node);
+                    auto it = std::upper_bound(page_ranges.begin(), page_ranges.end(), addr, [](std::uintptr_t value, const page_range& range) {
+                        return value < range.begin_;
+                    });
+                    if (it == page_ranges.begin()) {
+                        return nullptr;
+                    }
+                    --it;
+                    return addr < it->end_ ? it->page_ : nullptr;
+                };
+
+                struct free_node_record {
+                    node_t* node_;
+                    page_t* page_;
+                };
+
+                std::vector<free_node_record> free_nodes;
+                bool lookup_failed = false;
 
                 node_t* node = nullptr;
                 while (Queue::global_chunk_stack_.try_pop(node)) {
                     for (size_type i = 0; i < Queue::thread_local_capacity && node; ++i) {
-                        free_nodes.push_back(node);
                         page_t* page = find_page_for(node);
                         if (!page) DAKING_UNLIKELY {
-                            return 0;
+                            lookup_failed = true;
                         }
-                        ++free_by_page[page];
+                        else {
+                            ++page->reclaim_free_count_;
+                        }
+                        free_nodes.push_back(free_node_record{node, page});
                         node = node->next_.load(std::memory_order_relaxed);
                     }
                 }
@@ -419,11 +452,14 @@ namespace daking {
                     pair_ptr->second = 0;
 
                     while (local_node) {
-                        free_nodes.push_back(local_node);
                         page_t* page = find_page_for(local_node);
                         if (page) DAKING_LIKELY {
-                            ++free_by_page[page];
+                            ++page->reclaim_free_count_;
                         }
+                        else {
+                            lookup_failed = true;
+                        }
+                        free_nodes.push_back(free_node_record{local_node, page});
                         node_t* next = local_node->next_.load(std::memory_order_relaxed);
                         local_node->next_.store(nullptr, std::memory_order_relaxed);
                         local_node = next;
@@ -442,15 +478,19 @@ namespace daking {
                     node_t* chunk_tail = nullptr;
                     size_type chunk_size = 0;
 
-                    for (node_t* free_node : free_nodes) {
-                        free_node->next_.store(nullptr, std::memory_order_relaxed);
+                    for (free_node_record free_node : free_nodes) {
+                        if (!free_node.node_) DAKING_UNLIKELY {
+                            continue;
+                        }
+                        node_t* node = free_node.node_;
+                        node->next_.store(nullptr, std::memory_order_relaxed);
                         if (!chunk_head) {
-                            chunk_head = free_node;
+                            chunk_head = node;
                         }
                         else {
-                            chunk_tail->next_.store(free_node, std::memory_order_relaxed);
+                            chunk_tail->next_.store(node, std::memory_order_relaxed);
                         }
-                        chunk_tail = free_node;
+                        chunk_tail = node;
 
                         if (++chunk_size == Queue::thread_local_capacity) {
                             Queue::global_chunk_stack_.push(chunk_head);
@@ -467,7 +507,7 @@ namespace daking {
                     }
                 };
 
-                if (!global_page_list_) {
+                if (lookup_failed || !global_page_list_) {
                     republish_free_nodes();
                     return 0;
                 }
@@ -475,8 +515,7 @@ namespace daking {
                 page_t* forced_keep_page = nullptr;
                 bool has_live_page = false;
                 for (page_t* page = global_page_list_; page; page = page->next_) {
-                    auto it = free_by_page.find(page);
-                    if (it == free_by_page.end() || it->second != page->count_) {
+                    if (page->reclaim_free_count_ != page->count_) {
                         has_live_page = true;
                         break;
                     }
@@ -489,15 +528,13 @@ namespace daking {
                     if (page == forced_keep_page) {
                         return false;
                     }
-                    auto it = free_by_page.find(page);
-                    return it != free_by_page.end() && it->second == page->count_;
+                    return page->reclaim_free_count_ == page->count_;
                 };
 
-                std::vector<node_t*> kept_free_nodes;
+                std::vector<free_node_record> kept_free_nodes;
                 kept_free_nodes.reserve(free_nodes.size());
-                for (node_t* free_node : free_nodes) {
-                    page_t* page = find_page_for(free_node);
-                    if (!page || !should_reclaim(page)) {
+                for (free_node_record free_node : free_nodes) {
+                    if (!free_node.page_ || !should_reclaim(free_node.page_)) {
                         kept_free_nodes.push_back(free_node);
                     }
                 }
