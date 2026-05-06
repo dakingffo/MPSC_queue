@@ -142,6 +142,9 @@ The latest short-run matrix shows:
   quiescent scan, not a hot-path feature.
 - The remaining performance risk is reclaim-time scanning, not steady-state
   enqueue/dequeue.
+- `mpsc_bench_memory_cycle` excludes queue construction and explicit pre-reserve
+  setup from timing, so the reported throughput focuses on the two burst cycles
+  and the optional reclaim step.
 
 That means the next optimization target is the reclaim path itself, not the
 default queue fast path.

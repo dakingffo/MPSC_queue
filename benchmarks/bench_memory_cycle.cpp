@@ -78,8 +78,10 @@ static void BM_MPSC_MemoryCycle(benchmark::State& state) {
     const std::size_t total_items_per_burst = items_per_producer * static_cast<std::size_t>(producers);
 
     for (auto _ : state) {
+        state.PauseTiming();
         Queue q;
         Queue::reserve_global_chunk(64);
+        state.ResumeTiming();
 
         run_burst(q, producers, items_per_producer);
         if (!q.empty()) {
