@@ -133,6 +133,19 @@ prototype for validating the page ownership model, the public API shape, and
 benchmark coverage before investing in page-local chunk caches or lower-contention
 reclaim bookkeeping.
 
+## Current Benchmark Read
+
+The latest short-run matrix shows:
+
+- `elastic` without reclaim is now essentially on the same band as `stable`.
+- The reclaim path still costs real time, which is expected because it is a
+  quiescent scan, not a hot-path feature.
+- The remaining performance risk is reclaim-time scanning, not steady-state
+  enqueue/dequeue.
+
+That means the next optimization target is the reclaim path itself, not the
+default queue fast path.
+
 ## Benchmark Gates
 
 An elastic implementation should not be considered successful unless it passes:

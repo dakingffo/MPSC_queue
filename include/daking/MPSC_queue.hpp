@@ -165,16 +165,8 @@ namespace daking {
         template <typename Queue>
         struct MPSC_page;
 
-        template <typename Queue, bool Enable>
-        struct MPSC_node_page_link {};
-
         template <typename Queue>
-        struct MPSC_node_page_link<Queue, true> {
-            MPSC_page<Queue>* page_ = nullptr;
-        };
-
-        template <typename Queue>
-        struct MPSC_node : MPSC_node_page_link<Queue, Queue::uses_elastic_reclaim> {
+        struct MPSC_node {
             using value_type = typename Queue::value_type;
             
             using node_t = MPSC_node;
@@ -359,7 +351,6 @@ namespace daking {
                         global_page_list_ = new_page;
 
                         for (size_type i = 0; i < Queue::thread_local_capacity; ++i) {
-                            new_nodes[i].page_ = new_page;
                             new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
                             if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
                                 new_nodes[i].next_ = nullptr;
@@ -399,11 +390,25 @@ namespace daking {
 
                 std::vector<node_t*> free_nodes;
                 std::unordered_map<page_t*, size_type> free_by_page;
+
+                auto find_page_for = [&](node_t* free_node) {
+                    for (page_t* page = global_page_list_; page; page = page->next_) {
+                        if (free_node >= page->node_ && free_node < page->node_ + page->count_) {
+                            return page;
+                        }
+                    }
+                    return static_cast<page_t*>(nullptr);
+                };
+
                 node_t* node = nullptr;
                 while (Queue::global_chunk_stack_.try_pop(node)) {
                     for (size_type i = 0; i < Queue::thread_local_capacity && node; ++i) {
                         free_nodes.push_back(node);
-                        ++free_by_page[node->page_];
+                        page_t* page = find_page_for(node);
+                        if (!page) DAKING_UNLIKELY {
+                            return 0;
+                        }
+                        ++free_by_page[page];
                         node = node->next_.load(std::memory_order_relaxed);
                     }
                 }
@@ -415,7 +420,10 @@ namespace daking {
 
                     while (local_node) {
                         free_nodes.push_back(local_node);
-                        ++free_by_page[local_node->page_];
+                        page_t* page = find_page_for(local_node);
+                        if (page) DAKING_LIKELY {
+                            ++free_by_page[page];
+                        }
                         node_t* next = local_node->next_.load(std::memory_order_relaxed);
                         local_node->next_.store(nullptr, std::memory_order_relaxed);
                         local_node = next;
@@ -488,7 +496,8 @@ namespace daking {
                 std::vector<node_t*> kept_free_nodes;
                 kept_free_nodes.reserve(free_nodes.size());
                 for (node_t* free_node : free_nodes) {
-                    if (!should_reclaim(free_node->page_)) {
+                    page_t* page = find_page_for(free_node);
+                    if (!page || !should_reclaim(page)) {
                         kept_free_nodes.push_back(free_node);
                     }
                 }

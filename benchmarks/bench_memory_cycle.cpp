@@ -149,12 +149,12 @@ static void BM_MPSC_MemoryCycle(benchmark::State& state) {
 } // namespace
 
 BENCHMARK_TEMPLATE(BM_MPSC_MemoryCycle, StableQueue, ReclaimMode::none)
-    ->Arg(1)->Arg(4)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
+    ->Arg(1)->Arg(2)->Arg(4)->Arg(8)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
 BENCHMARK_TEMPLATE(BM_MPSC_MemoryCycle, IdleReclaimQueue, ReclaimMode::shrink_to_fit)
-    ->Arg(1)->Arg(4)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
+    ->Arg(1)->Arg(2)->Arg(4)->Arg(8)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
 BENCHMARK_TEMPLATE(BM_MPSC_MemoryCycle, ElasticQueue, ReclaimMode::none)
-    ->Arg(1)->Arg(4)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
+    ->Arg(1)->Arg(2)->Arg(4)->Arg(8)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
 BENCHMARK_TEMPLATE(BM_MPSC_MemoryCycle, ElasticQueue, ReclaimMode::free_pages)
-    ->Arg(1)->Arg(4)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
+    ->Arg(1)->Arg(2)->Arg(4)->Arg(8)->Arg(16)->UseRealTime()->MinWarmUpTime(1.0);
 
 BENCHMARK_MAIN();
