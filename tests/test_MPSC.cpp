@@ -147,6 +147,18 @@ TEST(MPSCQueueMemoryTest, ShrinkToFit_FailsWhileAnotherInstanceLives) {
 	EXPECT_EQ(Q::global_node_size_apprx(), (size_t)64);
 }
 
+TEST(MPSCQueueMemoryTest, ShrinkToFit_DisabledForStablePolicy) {
+	using StableQ = MPSC_queue<int, 64, 64, std::allocator<int>, daking::memory_policy::stable>;
+	StableQ q;
+
+	q.enqueue(9);
+	int value = 0;
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_TRUE(q.empty());
+
+	EXPECT_FALSE(q.shrink_to_fit());
+}
+
 // -------------------------------------------------------------------------
 // III. Bulk Operation Tests
 // -------------------------------------------------------------------------

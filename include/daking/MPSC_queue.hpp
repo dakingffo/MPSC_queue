@@ -102,6 +102,20 @@ SOFTWARE.
 
 namespace daking {
 
+    namespace memory_policy {
+        struct stable {
+            static constexpr bool can_shrink_to_fit = false;
+        };
+
+        struct idle_reclaim {
+            static constexpr bool can_shrink_to_fit = true;
+        };
+
+        struct elastic {
+            static constexpr bool can_shrink_to_fit = false;
+        };
+    }
+
     /*
                  SC                MP
          [tail]->[]->[]->[]->[]->[head]
@@ -382,7 +396,8 @@ namespace daking {
         typename Ty,                          
         std::size_t ThreadLocalCapacity = 256,
         std::size_t Align               = 64, /* std::hardware_destructive_interference_size */
-        typename Alloc                  = std::allocator<Ty>
+        typename Alloc                  = std::allocator<Ty>,
+        typename MemoryPolicy           = memory_policy::idle_reclaim
     >
     class MPSC_queue {
     public:
@@ -395,6 +410,7 @@ namespace daking {
         using pointer         = typename std::allocator_traits<allocator_type>::pointer;
         using reference       = Ty&;
         using const_reference = const Ty&;
+        using memory_policy_type = MemoryPolicy;
 
         static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
         static constexpr std::size_t align                 = Align;
@@ -418,6 +434,13 @@ namespace daking {
         static_assert(
             std::is_constructible_v<alloc_node_t, allocator_type> && std::is_constructible_v<alloc_page_t, allocator_type>,        
             "Alloc should have a template constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
+        );
+
+        static_assert(
+            std::is_same_v<memory_policy_type, memory_policy::stable> ||
+            std::is_same_v<memory_policy_type, memory_policy::idle_reclaim> ||
+            std::is_same_v<memory_policy_type, memory_policy::elastic>,
+            "MemoryPolicy must be one of daking::memory_policy::{stable, idle_reclaim, elastic}."
         );
 
         friend thread_hook_t;
@@ -645,6 +668,10 @@ namespace daking {
         }
 
         DAKING_ALWAYS_INLINE bool shrink_to_fit() {
+            if constexpr (!memory_policy_type::can_shrink_to_fit) {
+                return false;
+            }
+
             if (!empty()) {
                 return false;
             }
