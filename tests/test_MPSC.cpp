@@ -133,6 +133,21 @@ TEST(MPSCQueueBulkTest, EnqueueBulk_InputIterator) {
 	EXPECT_TRUE(queue.empty());
 }
 
+TEST(MPSCQueueBulkTest, EnqueueBulk_EmptyRangeIsNoOp) {
+	TestQueue queue;
+	const int value = 99;
+	std::vector<int> data;
+
+	queue.enqueue_bulk(value, 0);
+	EXPECT_TRUE(queue.empty());
+
+	queue.enqueue_bulk(data.begin(), data.size());
+	EXPECT_TRUE(queue.empty());
+
+	queue.enqueue_bulk(data.begin(), data.end());
+	EXPECT_TRUE(queue.empty());
+}
+
 TEST(MPSCQueueBulkTest, TryDequeueBulk_Partial) {
 	TestQueue queue;
 	queue.enqueue(1);
