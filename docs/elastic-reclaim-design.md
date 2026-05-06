@@ -104,8 +104,35 @@ Current branch status:
 
 - `memory_policy::stable` exists and disables `shrink_to_fit()`.
 - `memory_policy::idle_reclaim` is the default and keeps today's behavior.
-- `memory_policy::elastic` exists only as an experimental placeholder. It does
-  not implement online reclaim yet.
+- `memory_policy::elastic` is an opt-in prototype. It uses per-node page metadata,
+  per-page free counts, and `reclaim_free_pages()` to release pages whose nodes
+  have all returned to the global free stack.
+
+## Current Elastic Prototype
+
+The current prototype intentionally favors correctness and observability over
+final throughput:
+
+- It is selected only by `memory_policy::elastic`.
+- Default `idle_reclaim` and `stable` allocation paths keep their thread-local
+  chunk caches.
+- Elastic allocation and deallocation still use thread-local chunk caches. The
+  global mutex is only used when a thread refills or flushes a chunk and when
+  reclamation runs.
+- Each elastic node records its owning page. Each page tracks an approximate
+  free-node count.
+- Reclamation drains the global free-list under the mutex, optionally sweeps
+  recycled thread-local caches when no live thread hooks remain, marks fully
+  free pages, returns nodes from live pages to the free-list, and deallocates
+  reclaimable pages.
+- A page containing the queue dummy node or any queued item is not reclaimed.
+- The current public `reclaim_free_pages()` path is a quiescent reclaim hook. It
+  is not yet a fully concurrent online shrinker for active producers.
+
+This is not the final low-jitter elastic architecture. It is a first correctness
+prototype for validating the page ownership model, the public API shape, and
+benchmark coverage before investing in page-local chunk caches or lower-contention
+reclaim bookkeeping.
 
 ## Benchmark Gates
 
@@ -128,7 +155,7 @@ Acceptance target:
 ## Implementation Plan
 
 1. Introduce policy type names without changing hot-path behavior. Done.
-2. Add benchmarks that can compare policy types side by side.
-3. Prototype page-local chunks behind an opt-in `elastic` policy.
-4. Add reclaim accounting and tests.
+2. Add benchmarks that can compare policy types side by side. Done.
+3. Prototype page-aware reclaim behind an opt-in `elastic` policy. In progress.
+4. Add reclaim accounting and tests. In progress.
 5. Run soak and latency benchmarks before considering a PR upstream.

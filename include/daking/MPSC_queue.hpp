@@ -163,7 +163,18 @@ namespace daking {
 
     namespace detail {
         template <typename Queue>
-        struct MPSC_node {
+        struct MPSC_page;
+
+        template <typename Queue, bool Enable>
+        struct MPSC_node_page_link {};
+
+        template <typename Queue>
+        struct MPSC_node_page_link<Queue, true> {
+            MPSC_page<Queue>* page_ = nullptr;
+        };
+
+        template <typename Queue>
+        struct MPSC_node : MPSC_node_page_link<Queue, Queue::uses_elastic_reclaim> {
             using value_type = typename Queue::value_type;
             
             using node_t = MPSC_node;
@@ -188,12 +199,14 @@ namespace daking {
             using page_t      = MPSC_page;
 
             MPSC_page(node_t* node, size_type count, page_t* next) 
-                : node_(node), count_(count), next_(next) {}
+                : node_(node), count_(count), next_(next), free_count_(count) {}
             ~MPSC_page() = default;
 
             size_type count_;
             node_t*   node_;
             page_t*   next_;
+            std::atomic<size_type> free_count_;
+            bool      reclaiming_ = false;
         };
 
         template <typename Queue>
@@ -344,18 +357,122 @@ namespace daking {
                 altraits_page_t::construct(*this, new_page, new_nodes, count, global_page_list_);
                 global_page_list_ = new_page;
 
-                for (size_type i = 0; i < count; i++) {
-                    new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
-                    if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
-                        // chunk_count = count / ThreadLocalCapacity
-                        new_nodes[i].next_ = nullptr;
-                        std::atomic_thread_fence(std::memory_order_acq_rel);
-                        // mutex don't protect global_chunk_stack_
-                        Queue::global_chunk_stack_.push(&new_nodes[i - Queue::thread_local_capacity + 1]);
+                if constexpr (Queue::uses_elastic_reclaim) {
+                    for (size_type i = 0; i < count; i++) {
+                        new_nodes[i].page_ = new_page;
+                        new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
+                        if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
+                            new_nodes[i].next_ = nullptr;
+                            std::atomic_thread_fence(std::memory_order_acq_rel);
+                            Queue::global_chunk_stack_.push(&new_nodes[i - Queue::thread_local_capacity + 1]);
+                        }
+                    }
+                }
+                else {
+                    for (size_type i = 0; i < count; i++) {
+                        new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
+                        if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
+                            // chunk_count = count / ThreadLocalCapacity
+                            new_nodes[i].next_ = nullptr;
+                            std::atomic_thread_fence(std::memory_order_acq_rel);
+                            // mutex don't protect global_chunk_stack_
+                            Queue::global_chunk_stack_.push(&new_nodes[i - Queue::thread_local_capacity + 1]);
+                        }
                     }
                 }
 
                 global_node_count_.store(global_node_count_ + count, std::memory_order_release);
+            }
+
+            size_type reclaim_free_pages() {
+                static_assert(Queue::uses_elastic_reclaim);
+
+                std::vector<node_t*> free_nodes;
+                std::unordered_map<page_t*, size_type> global_free_by_page;
+                node_t* node = nullptr;
+                while (Queue::global_chunk_stack_.try_pop(node)) {
+                    for (size_type i = 0; i < Queue::thread_local_capacity && node; ++i) {
+                        free_nodes.push_back(node);
+                        ++global_free_by_page[node->page_];
+                        node = node->next_.load(std::memory_order_relaxed);
+                    }
+                }
+
+                if (global_thread_local_manager_.empty()) {
+                    auto collect_thread_local = [&](thread_local_t* pair_ptr) {
+                        node_t* local_node = pair_ptr->first;
+                        pair_ptr->first = nullptr;
+                        pair_ptr->second = 0;
+
+                        while (local_node) {
+                            free_nodes.push_back(local_node);
+                            ++global_free_by_page[local_node->page_];
+                            node_t* next = local_node->next_.load(std::memory_order_relaxed);
+                            local_node->next_.store(nullptr, std::memory_order_relaxed);
+                            local_node = next;
+                        }
+                    };
+
+                    for (auto& pair_ptr : global_thread_local_recycler_) {
+                        collect_thread_local(pair_ptr.get());
+                    }
+                }
+
+                size_type reclaimed_nodes = 0;
+                for (page_t* page = global_page_list_; page; page = page->next_) {
+                    page->reclaiming_ = false;
+                    if (page->free_count_.load(std::memory_order_acquire) == page->count_ &&
+                        global_free_by_page[page] == page->count_) {
+                        page->reclaiming_ = true;
+                        reclaimed_nodes += page->count_;
+                    }
+                }
+
+                node_t* chunk_head = nullptr;
+                node_t* chunk_tail = nullptr;
+                size_type chunk_size = 0;
+                for (node_t* free_node : free_nodes) {
+                    if (!free_node->page_->reclaiming_) {
+                        free_node->next_.store(nullptr, std::memory_order_relaxed);
+                        if (!chunk_head) {
+                            chunk_head = free_node;
+                        }
+                        else {
+                            chunk_tail->next_.store(free_node, std::memory_order_relaxed);
+                        }
+                        chunk_tail = free_node;
+
+                        if (++chunk_size == Queue::thread_local_capacity) {
+                            Queue::global_chunk_stack_.push(chunk_head);
+                            chunk_head = nullptr;
+                            chunk_tail = nullptr;
+                            chunk_size = 0;
+                        }
+                    }
+                }
+
+                if (chunk_head) DAKING_UNLIKELY {
+                    Queue::global_chunk_stack_.push(chunk_head);
+                }
+
+                page_t** current = &global_page_list_;
+                while (*current) {
+                    page_t* page = *current;
+                    if (!page->reclaiming_) {
+                        current = &page->next_;
+                        continue;
+                    }
+
+                    *current = page->next_;
+                    altraits_node_t::deallocate(*this, page->node_, page->count_);
+                    altraits_page_t::deallocate(*this, page, 1);
+                }
+
+                if (reclaimed_nodes) {
+                    global_node_count_.fetch_sub(reclaimed_nodes, std::memory_order_acq_rel);
+                }
+
+                return reclaimed_nodes;
             }
 
             DAKING_ALWAYS_INLINE thread_local_t* register_for(std::thread::id tid) {
@@ -414,6 +531,8 @@ namespace daking {
 
         static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
         static constexpr std::size_t align                 = Align;
+        static constexpr bool uses_elastic_reclaim =
+            std::is_same_v<memory_policy_type, memory_policy::elastic>;
 
     private:
         using node_t          = detail::MPSC_node<MPSC_queue>;
@@ -667,6 +786,19 @@ namespace daking {
 			return global_manager_instance_ ? _reserve_global_external(chunk_count) : false;
         }
 
+        DAKING_ALWAYS_INLINE static size_type reclaim_free_pages() {
+            if constexpr (!uses_elastic_reclaim) {
+                return 0;
+            }
+            else {
+                if (!global_manager_instance_) {
+                    return 0;
+                }
+                std::lock_guard<std::mutex> lock(global_mutex_);
+                return _get_global_manager().reclaim_free_pages();
+            }
+        }
+
         DAKING_ALWAYS_INLINE bool shrink_to_fit() {
             if constexpr (!memory_policy_type::can_shrink_to_fit) {
                 return false;
@@ -723,6 +855,25 @@ namespace daking {
         }
 
         DAKING_ALWAYS_INLINE node_t* _allocate() {
+            if constexpr (uses_elastic_reclaim) {
+                node_t*& thread_local_node_list = _get_thread_local_node_list();
+                size_type& thread_local_node_size = _get_thread_local_node_size();
+                if (thread_local_node_size == 0) DAKING_UNLIKELY {
+                    std::lock_guard<std::mutex> lock(global_mutex_);
+                    while (!global_chunk_stack_.try_pop(thread_local_node_list)) {
+                        _get_global_manager().reserve(std::max(thread_local_capacity, _get_global_manager().node_count()));
+                    }
+                    thread_local_node_size = thread_local_capacity;
+                }
+                thread_local_node_size--;
+                DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list);
+                DAKING_TSAN_ANNOTATE_ACQUIRE(thread_local_node_list->next_);
+                node_t* res = std::exchange(thread_local_node_list, thread_local_node_list->next_.load(std::memory_order_relaxed));
+                res->page_->free_count_.fetch_sub(1, std::memory_order_acq_rel);
+                res->next_.store(nullptr, std::memory_order_relaxed);
+                return res;
+            }
+
             node_t*& thread_local_node_list = _get_thread_local_node_list();
             size_type& thread_local_node_size = _get_thread_local_node_size();
             if (thread_local_node_size == 0) DAKING_UNLIKELY {
@@ -740,6 +891,21 @@ namespace daking {
         }
 
         DAKING_ALWAYS_INLINE void _deallocate(node_t* node) noexcept {
+            if constexpr (uses_elastic_reclaim) {
+                node_t*& thread_local_node_list = _get_thread_local_node_list();
+                node->next_.store(thread_local_node_list, std::memory_order_relaxed);
+                thread_local_node_list = node;
+                node->page_->free_count_.fetch_add(1, std::memory_order_acq_rel);
+                DAKING_TSAN_ANNOTATE_RELEASE(node);
+                if (++_get_thread_local_node_size() >= thread_local_capacity) DAKING_UNLIKELY {
+                    std::lock_guard<std::mutex> lock(global_mutex_);
+                    global_chunk_stack_.push(thread_local_node_list);
+                    thread_local_node_list = nullptr;
+                    _get_thread_local_node_size() = 0;
+                }
+                return;
+            }
+
             node_t*& thread_local_node_list = _get_thread_local_node_list();
             node->next_.store(thread_local_node_list, std::memory_order_relaxed);
             thread_local_node_list = node;
