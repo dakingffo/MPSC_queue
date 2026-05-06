@@ -284,6 +284,8 @@ We get below performance：
 2.  `ThreadLocalCapacity` (thread-local capacity) is fixed at **compile time**.
 3.  Pointer chasing cannot be avoided because it is a pure linked-list structure.
 
+If you need to reclaim memory while keeping the queue instance alive, call `shrink_to_fit()` only after the queue has been fully drained and all producers have stopped. This is an idle-time reclamation path, not a concurrent shrink path.
+
 ## Features
 
 1.  Multiple-Producer, Single-Consumer (MPSC). The closer the contention scenario is to SPSC, the closer the throughput gets to the SPSC benchmark performance.

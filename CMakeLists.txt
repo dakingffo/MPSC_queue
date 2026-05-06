@@ -51,6 +51,12 @@ set(HDR_HISTOGRAM_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(HDR_LOG_REQUIRED "DISABLED" CACHE STRING "" FORCE)
 FetchContent_MakeAvailable(hdrhistogram)
 
+if(TARGET hdr_histogram_static)
+    target_compile_options(hdr_histogram_static PRIVATE
+        $<$<C_COMPILER_ID:Clang>:-Wno-incompatible-pointer-types -Wno-deprecated-declarations>
+    )
+endif()
+
 # moodycamel ConcurrentQueue
 FetchContent_Declare(
     concurrentqueue

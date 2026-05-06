@@ -97,6 +97,24 @@ TEST(MPSCQueueMemoryTest, ReserveGlobalChunk) {
 	EXPECT_EQ(Q::global_node_size_apprx(), reserved_size);
 }
 
+TEST(MPSCQueueMemoryTest, ShrinkToFit_ReclaimsPagesWhenIdle) {
+	using Q = MPSC_queue<int, 64>;
+	Q q;
+
+	Q::reserve_global_chunk(12);
+	size_t before = Q::global_node_size_apprx();
+	EXPECT_GE(before, (size_t)12 * 64);
+
+	int value = 0;
+	q.enqueue(7);
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_TRUE(q.empty());
+
+	EXPECT_TRUE(q.shrink_to_fit());
+	EXPECT_TRUE(q.empty());
+	EXPECT_EQ(Q::global_node_size_apprx(), (size_t)64);
+}
+
 // -------------------------------------------------------------------------
 // III. Bulk Operation Tests
 // -------------------------------------------------------------------------

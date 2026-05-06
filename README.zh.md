@@ -286,6 +286,8 @@ cmake --build out/build/clang-local --target mpsc_vs_mpmc_benchmark
 2.  `ThreadLocalCapacity`（线程本地容量）在**编译时**已固定。
 3.  无法避免指针追逐，因为是纯链表结构。
 
+如果你需要在队列实例仍然存在时回收内存，可以在队列已经完全清空并且所有生产者停止之后调用 `shrink_to_fit()`。它是一个空闲期回收接口，不是并发缩容接口。
+
 ## 特性 (FEATURES)
 
 1.  多生产者，单消费者（MPSC）， 若竞争场景越接近SPSC，吞吐量越接近SPSC基准测试性能。 

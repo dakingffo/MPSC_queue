@@ -644,6 +644,28 @@ namespace daking {
 			return global_manager_instance_ ? _reserve_global_external(chunk_count) : false;
         }
 
+        DAKING_ALWAYS_INLINE bool shrink_to_fit() {
+            if (!empty()) {
+                return false;
+            }
+
+            std::lock_guard<std::mutex> lock(global_mutex_);
+            if (global_instance_count_.load(std::memory_order_acquire) != 1) {
+                return false;
+            }
+
+            if (!empty()) {
+                return false;
+            }
+
+            _free_global();
+            _get_global_manager().reserve(thread_local_capacity);
+            node_t* dummy = _allocate();
+            tail_ = dummy;
+            head_.store(dummy, std::memory_order_release);
+            return true;
+        }
+
     private:
         DAKING_ALWAYS_INLINE static manager_t& _get_global_manager() noexcept {
             return *global_manager_instance_;
