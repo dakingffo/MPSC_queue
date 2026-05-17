@@ -262,8 +262,10 @@ namespace daking {
             ~MPSC_thread_hook() {
                 // If this is consumer hook, release the queue tail to help destructor thread.
                 std::atomic_thread_fence(std::memory_order_release);
-                std::lock_guard<std::mutex> guard(Queue::global_mutex_);
-                Queue::_get_global_manager().unregister_for(tid_);
+                if (Queue::_is_global_manager_alive()) {
+                    std::lock_guard<std::mutex> guard(Queue::global_mutex_);
+                    Queue::_get_global_manager().unregister_for(tid_);
+                }
             }
 
             DAKING_ALWAYS_INLINE node_t*& node_list() noexcept {
@@ -298,9 +300,14 @@ namespace daking {
             using altraits_page_t         = std::allocator_traits<alloc_page_t>;
 
             MPSC_manager(const Alloc& alloc) 
-                : alloc_node_t(alloc), alloc_page_t(alloc) {}
+                : alloc_node_t(alloc)
+                , alloc_page_t(alloc) {}
 
-            ~MPSC_manager() = default;
+            ~MPSC_manager() {
+                reset();
+                Queue::global_manager_instance_ = nullptr;
+                std::atomic_thread_fence(std::memory_order_release);
+            }
 
             void reset() {
                 /* Already locked */
@@ -637,16 +644,21 @@ namespace daking {
 		}
 
         DAKING_ALWAYS_INLINE static size_type global_node_size_apprx() noexcept {
-            return global_manager_instance_ ? _get_global_manager().node_count() : 0;
+            return _is_global_manager_alive() ? _get_global_manager().node_count() : 0;
         }
 
         DAKING_ALWAYS_INLINE static bool reserve_global_chunk(size_type chunk_count) {
-			return global_manager_instance_ ? _reserve_global_external(chunk_count) : false;
+			return _is_global_manager_alive() ? _reserve_global_external(chunk_count) : false;
         }
 
     private:
         DAKING_ALWAYS_INLINE static manager_t& _get_global_manager() noexcept {
             return *global_manager_instance_;
+        }
+
+        DAKING_ALWAYS_INLINE static bool _is_global_manager_alive() noexcept {
+            std::atomic_thread_fence(std::memory_order_acquire);
+            return global_manager_instance_ != nullptr;
         }
 
         DAKING_ALWAYS_INLINE thread_hook_t& _get_thread_hook() {
@@ -732,7 +744,9 @@ namespace daking {
         DAKING_ALWAYS_INLINE void _free_global() {
             /* Already locked */
             global_chunk_stack_.reset();
-            _get_global_manager().reset();
+            if (_is_global_manager_alive()) {
+                _get_global_manager().reset();
+            }
         }
 
         /* Global LockFree*/
