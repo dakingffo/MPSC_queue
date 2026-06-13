@@ -61,7 +61,7 @@ FetchContent_MakeAvailable(concurrentqueue)
 find_package(Threads REQUIRED)
 
 set(ATOMIC_LIBRARY
-    $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<NOT:$<PLATFORM_ID:Windows>>>:atomic>
+    $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<NOT:$<PLATFORM_ID:Windows>>,$<NOT:$<PLATFORM_ID:Darwin>>>:atomic>
 )
 
 set(COMMON_TARGET_PROPERTIES
