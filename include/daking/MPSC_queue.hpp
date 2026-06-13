@@ -94,6 +94,8 @@ SOFTWARE.
 #include <iterator>
 #include <utility>
 #include <atomic>
+#include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -101,6 +103,20 @@ SOFTWARE.
 #include <cstddef>
 
 namespace daking {
+
+    namespace memory_policy {
+        struct stable {
+            static constexpr bool can_shrink_to_fit = false;
+        };
+
+        struct idle_reclaim {
+            static constexpr bool can_shrink_to_fit = true;
+        };
+
+        struct elastic {
+            static constexpr bool can_shrink_to_fit = false;
+        };
+    }
 
     /*
                  SC                MP
@@ -149,6 +165,9 @@ namespace daking {
 
     namespace detail {
         template <typename Queue>
+        struct MPSC_page;
+
+        template <typename Queue>
         struct MPSC_node {
             using value_type = typename Queue::value_type;
             
@@ -180,6 +199,7 @@ namespace daking {
             size_type count_;
             node_t*   node_;
             page_t*   next_;
+            size_type reclaim_free_count_ = 0;
         };
 
         template <typename Queue>
@@ -332,23 +352,225 @@ namespace daking {
 
             void reserve(size_type count) {
                 /* Already locked */
-                node_t* new_nodes = altraits_node_t::allocate(*this, count);
-                page_t* new_page = altraits_page_t::allocate(*this, 1);
-                altraits_page_t::construct(*this, new_page, new_nodes, count, global_page_list_);
-                global_page_list_ = new_page;
+                if constexpr (Queue::uses_elastic_reclaim) {
+                    size_type page_count = count / Queue::thread_local_capacity;
+                    for (size_type p = 0; p < page_count; ++p) {
+                        node_t* new_nodes = altraits_node_t::allocate(*this, Queue::thread_local_capacity);
+                        page_t* new_page = altraits_page_t::allocate(*this, 1);
+                        altraits_page_t::construct(*this, new_page, new_nodes, Queue::thread_local_capacity, global_page_list_);
+                        global_page_list_ = new_page;
 
-                for (size_type i = 0; i < count; i++) {
-                    new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
-                    if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
-                        // chunk_count = count / ThreadLocalCapacity
-                        new_nodes[i].next_ = nullptr;
-                        std::atomic_thread_fence(std::memory_order_acq_rel);
-                        // mutex don't protect global_chunk_stack_
-                        Queue::global_chunk_stack_.push(&new_nodes[i - Queue::thread_local_capacity + 1]);
+                        for (size_type i = 0; i < Queue::thread_local_capacity; ++i) {
+                            new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
+                            if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
+                                new_nodes[i].next_ = nullptr;
+                                std::atomic_thread_fence(std::memory_order_acq_rel);
+                                Queue::global_chunk_stack_.push(&new_nodes[i - Queue::thread_local_capacity + 1]);
+                            }
+                        }
+                    }
+                }
+                else {
+                    node_t* new_nodes = altraits_node_t::allocate(*this, count);
+                    page_t* new_page = altraits_page_t::allocate(*this, 1);
+                    altraits_page_t::construct(*this, new_page, new_nodes, count, global_page_list_);
+                    global_page_list_ = new_page;
+
+                    for (size_type i = 0; i < count; i++) {
+                        new_nodes[i].next_ = new_nodes + i + 1; // seq_cst
+                        if ((i & (Queue::thread_local_capacity - 1)) == Queue::thread_local_capacity - 1) DAKING_UNLIKELY {
+                            // chunk_count = count / ThreadLocalCapacity
+                            new_nodes[i].next_ = nullptr;
+                            std::atomic_thread_fence(std::memory_order_acq_rel);
+                            // mutex don't protect global_chunk_stack_
+                            Queue::global_chunk_stack_.push(&new_nodes[i - Queue::thread_local_capacity + 1]);
+                        }
                     }
                 }
 
                 global_node_count_.store(global_node_count_ + count, std::memory_order_release);
+            }
+
+            size_type reclaim_free_pages() {
+                static_assert(Queue::uses_elastic_reclaim);
+
+                if (global_thread_local_manager_.size() != 1) {
+                    return 0;
+                }
+
+                struct page_range {
+                    std::uintptr_t begin_;
+                    std::uintptr_t end_;
+                    page_t* page_;
+                };
+
+                std::vector<page_range> page_ranges;
+                for (page_t* page = global_page_list_; page; page = page->next_) {
+                    page->reclaim_free_count_ = 0;
+                    const auto begin = reinterpret_cast<std::uintptr_t>(page->node_);
+                    page_ranges.push_back(page_range{
+                        begin,
+                        begin + sizeof(node_t) * page->count_,
+                        page
+                    });
+                }
+                std::sort(page_ranges.begin(), page_ranges.end(), [](const page_range& lhs, const page_range& rhs) {
+                    return lhs.begin_ < rhs.begin_;
+                });
+
+                auto find_page_for = [&](node_t* free_node) -> page_t* {
+                    const auto addr = reinterpret_cast<std::uintptr_t>(free_node);
+                    auto it = std::upper_bound(page_ranges.begin(), page_ranges.end(), addr, [](std::uintptr_t value, const page_range& range) {
+                        return value < range.begin_;
+                    });
+                    if (it == page_ranges.begin()) {
+                        return nullptr;
+                    }
+                    --it;
+                    return addr < it->end_ ? it->page_ : nullptr;
+                };
+
+                struct free_node_record {
+                    node_t* node_;
+                    page_t* page_;
+                };
+
+                std::vector<free_node_record> free_nodes;
+                bool lookup_failed = false;
+
+                node_t* node = nullptr;
+                while (Queue::global_chunk_stack_.try_pop(node)) {
+                    for (size_type i = 0; i < Queue::thread_local_capacity && node; ++i) {
+                        page_t* page = find_page_for(node);
+                        if (!page) DAKING_UNLIKELY {
+                            lookup_failed = true;
+                        }
+                        else {
+                            ++page->reclaim_free_count_;
+                        }
+                        free_nodes.push_back(free_node_record{node, page});
+                        node = node->next_.load(std::memory_order_relaxed);
+                    }
+                }
+
+                auto collect_thread_local = [&](thread_local_t* pair_ptr) {
+                    node_t* local_node = pair_ptr->first;
+                    pair_ptr->first = nullptr;
+                    pair_ptr->second = 0;
+
+                    while (local_node) {
+                        page_t* page = find_page_for(local_node);
+                        if (page) DAKING_LIKELY {
+                            ++page->reclaim_free_count_;
+                        }
+                        else {
+                            lookup_failed = true;
+                        }
+                        free_nodes.push_back(free_node_record{local_node, page});
+                        node_t* next = local_node->next_.load(std::memory_order_relaxed);
+                        local_node->next_.store(nullptr, std::memory_order_relaxed);
+                        local_node = next;
+                    }
+                };
+
+                for (auto& [tid, pair_ptr] : global_thread_local_manager_) {
+                    collect_thread_local(pair_ptr.get());
+                }
+                for (auto& pair_ptr : global_thread_local_recycler_) {
+                    collect_thread_local(pair_ptr.get());
+                }
+
+                auto republish_free_nodes = [&] {
+                    node_t* chunk_head = nullptr;
+                    node_t* chunk_tail = nullptr;
+                    size_type chunk_size = 0;
+
+                    for (free_node_record free_node : free_nodes) {
+                        if (!free_node.node_) DAKING_UNLIKELY {
+                            continue;
+                        }
+                        node_t* node = free_node.node_;
+                        node->next_.store(nullptr, std::memory_order_relaxed);
+                        if (!chunk_head) {
+                            chunk_head = node;
+                        }
+                        else {
+                            chunk_tail->next_.store(node, std::memory_order_relaxed);
+                        }
+                        chunk_tail = node;
+
+                        if (++chunk_size == Queue::thread_local_capacity) {
+                            Queue::global_chunk_stack_.push(chunk_head);
+                            chunk_head = nullptr;
+                            chunk_tail = nullptr;
+                            chunk_size = 0;
+                        }
+                    }
+
+                    if (chunk_head) DAKING_UNLIKELY {
+                        auto& pair_ptr = global_thread_local_manager_.begin()->second;
+                        pair_ptr->first = chunk_head;
+                        pair_ptr->second = chunk_size;
+                    }
+                };
+
+                if (lookup_failed || !global_page_list_) {
+                    republish_free_nodes();
+                    return 0;
+                }
+
+                page_t* forced_keep_page = nullptr;
+                bool has_live_page = false;
+                for (page_t* page = global_page_list_; page; page = page->next_) {
+                    if (page->reclaim_free_count_ != page->count_) {
+                        has_live_page = true;
+                        break;
+                    }
+                }
+                if (!has_live_page) {
+                    forced_keep_page = global_page_list_;
+                }
+
+                auto should_reclaim = [&](page_t* page) {
+                    if (page == forced_keep_page) {
+                        return false;
+                    }
+                    return page->reclaim_free_count_ == page->count_;
+                };
+
+                std::vector<free_node_record> kept_free_nodes;
+                kept_free_nodes.reserve(free_nodes.size());
+                for (free_node_record free_node : free_nodes) {
+                    if (!free_node.page_ || !should_reclaim(free_node.page_)) {
+                        kept_free_nodes.push_back(free_node);
+                    }
+                }
+                free_nodes.swap(kept_free_nodes);
+
+                size_type reclaimed_nodes = 0;
+                page_t** current = &global_page_list_;
+                while (*current) {
+                    page_t* page = *current;
+                    if (!should_reclaim(page)) {
+                        current = &page->next_;
+                        continue;
+                    }
+
+                    *current = page->next_;
+                    reclaimed_nodes += page->count_;
+                    altraits_node_t::deallocate(*this, page->node_, page->count_);
+                    altraits_page_t::deallocate(*this, page, 1);
+                }
+
+                if (!reclaimed_nodes) {
+                    republish_free_nodes();
+                    return 0;
+                }
+
+                republish_free_nodes();
+                global_node_count_.fetch_sub(reclaimed_nodes, std::memory_order_acq_rel);
+
+                return reclaimed_nodes;
             }
 
             DAKING_ALWAYS_INLINE thread_local_t* register_for(std::thread::id tid) {
@@ -389,7 +611,8 @@ namespace daking {
         typename Ty,                          
         std::size_t ThreadLocalCapacity = 256,
         std::size_t Align               = 64, /* std::hardware_destructive_interference_size */
-        typename Alloc                  = std::allocator<Ty>
+        typename Alloc                  = std::allocator<Ty>,
+        typename MemoryPolicy           = memory_policy::idle_reclaim
     >
     class MPSC_queue {
     public:
@@ -402,9 +625,12 @@ namespace daking {
         using pointer         = typename std::allocator_traits<allocator_type>::pointer;
         using reference       = Ty&;
         using const_reference = const Ty&;
+        using memory_policy_type = MemoryPolicy;
 
         static constexpr std::size_t thread_local_capacity = ThreadLocalCapacity;
         static constexpr std::size_t align                 = Align;
+        static constexpr bool uses_elastic_reclaim =
+            std::is_same_v<memory_policy_type, memory_policy::elastic>;
 
     private:
         using node_t          = detail::MPSC_node<MPSC_queue>;
@@ -425,6 +651,13 @@ namespace daking {
         static_assert(
             std::is_constructible_v<alloc_node_t, allocator_type> && std::is_constructible_v<alloc_page_t, allocator_type>,        
             "Alloc should have a template constructor like 'Alloc(const Alloc<T>& alloc)' to meet internal conversion."
+        );
+
+        static_assert(
+            std::is_same_v<memory_policy_type, memory_policy::stable> ||
+            std::is_same_v<memory_policy_type, memory_policy::idle_reclaim> ||
+            std::is_same_v<memory_policy_type, memory_policy::elastic>,
+            "MemoryPolicy must be one of daking::memory_policy::{stable, idle_reclaim, elastic}."
         );
 
         friend thread_hook_t;
@@ -649,6 +882,45 @@ namespace daking {
 
         DAKING_ALWAYS_INLINE static bool reserve_global_chunk(size_type chunk_count) {
 			return _is_global_manager_alive() ? _reserve_global_external(chunk_count) : false;
+        }
+
+        DAKING_ALWAYS_INLINE static size_type reclaim_free_pages() {
+            if constexpr (!uses_elastic_reclaim) {
+                return 0;
+            }
+            else {
+                if (!global_manager_instance_) {
+                    return 0;
+                }
+                std::lock_guard<std::mutex> lock(global_mutex_);
+                return _get_global_manager().reclaim_free_pages();
+            }
+        }
+
+        DAKING_ALWAYS_INLINE bool shrink_to_fit() {
+            if constexpr (!memory_policy_type::can_shrink_to_fit) {
+                return false;
+            }
+
+            if (!empty()) {
+                return false;
+            }
+
+            std::lock_guard<std::mutex> lock(global_mutex_);
+            if (global_instance_count_.load(std::memory_order_acquire) != 1) {
+                return false;
+            }
+
+            if (!empty()) {
+                return false;
+            }
+
+            _free_global();
+            _get_global_manager().reserve(thread_local_capacity);
+            node_t* dummy = _allocate();
+            tail_ = dummy;
+            head_.store(dummy, std::memory_order_release);
+            return true;
         }
 
     private:

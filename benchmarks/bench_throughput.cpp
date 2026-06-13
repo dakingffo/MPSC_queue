@@ -11,12 +11,29 @@ constexpr size_t TOTAL_OPS = 100000000;
 // using TestQueue = moodycamel::ConcurrentQueue<int>;
 using TestQueue = daking::MPSC_queue<int>;
 
+struct BenchmarkRunConfig {
+    int producers;
+    size_t reserve_chunks;
+    bool shrink_before_run;
+    bool bulk_mode;
+};
+
 void producer_thread(TestQueue* q, size_t items_to_push, std::atomic_bool* start) {
     while (!start->load(std::memory_order_acquire)) {
         std::this_thread::yield();
     }
     for (size_t i = 0; i < items_to_push; ++i) {
         q->enqueue(1);
+    }
+}
+
+void producer_thread_enqueue_bulk(TestQueue* q, size_t items_to_push, std::atomic_bool* start) {
+    while (!start->load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    int nums[32]{};
+    for (size_t i = 0; i < items_to_push; i += 32) {
+        q->enqueue_bulk(nums, std::min(items_to_push - i, (std::size_t)32));
     }
 }
 
@@ -33,20 +50,30 @@ void consumer_thread(TestQueue* q, size_t total_items_to_pop, std::atomic_bool* 
     }
 }
 
-static void BM_MPSC_Throughput(benchmark::State& state) {
-    const int num_producers = (int)state.range(0);
-    const size_t items_per_producer = TOTAL_OPS / num_producers;
-
-    TestQueue q;
+static void RunThroughputScenario(benchmark::State& state, const BenchmarkRunConfig& cfg) {
+    const size_t items_per_producer = TOTAL_OPS / cfg.producers;
 
     for (auto _ : state) {
+        TestQueue q;
+        if (cfg.reserve_chunks != 0) {
+            TestQueue::reserve_global_chunk(cfg.reserve_chunks);
+        }
+        if (cfg.shrink_before_run) {
+            q.shrink_to_fit();
+        }
+
         state.PauseTiming();
         std::vector<std::thread> producers;
-        producers.reserve(num_producers);
-		std::atomic_bool start{ false };
+        producers.reserve(cfg.producers);
+        std::atomic_bool start{ false };
         std::thread consumer(consumer_thread, &q, TOTAL_OPS, &start);
-        for (int i = 0; i < num_producers; ++i) {
-            producers.emplace_back(producer_thread, &q, items_per_producer, &start);
+        for (int i = 0; i < cfg.producers; ++i) {
+            if (cfg.bulk_mode) {
+                producers.emplace_back(producer_thread_enqueue_bulk, &q, items_per_producer, &start);
+            }
+            else {
+                producers.emplace_back(producer_thread, &q, items_per_producer, &start);
+            }
         }
         state.ResumeTiming();
         start.store(true, std::memory_order_release);
@@ -61,7 +88,11 @@ static void BM_MPSC_Throughput(benchmark::State& state) {
     }
 
     state.SetItemsProcessed(TOTAL_OPS * state.iterations());
-    state.SetLabel("P=" + std::to_string(num_producers) + ", C=1");
+}
+
+static void BM_MPSC_Throughput(benchmark::State& state) {
+    RunThroughputScenario(state, BenchmarkRunConfig{ (int)state.range(0), 0, false, false });
+    state.SetLabel("P=" + std::to_string((int)state.range(0)) + ", warm");
 }
 
 BENCHMARK(BM_MPSC_Throughput)
@@ -129,47 +160,11 @@ BENCHMARK(BM_4x_UnevenWave_SPSClike_Aggregation)
     ->UseRealTime()
     ->MinWarmUpTime(2.0);
 
-void producer_thread_enqueue_bulk(TestQueue* q, size_t items_to_push, std::atomic_bool* start) {
-    while (!start->load(std::memory_order_acquire)) {
-        std::this_thread::yield();
-    }
-    int nums[32]{};
-    for (size_t i = 0; i < items_to_push; i += 32) {
-        q->enqueue_bulk(nums, std::min(items_to_push - i, (std::size_t)32));
-    }
-}
-
 // consumer thread remains the same, because dequeue_bulk is just a while loop of try_dequeue
 
 static void BM_MPSC_Throughput_Bulk(benchmark::State& state) {
-    const int num_producers = (int)state.range(0);
-    const size_t items_per_producer = TOTAL_OPS / num_producers;
-
-    TestQueue q;
-
-    for (auto _ : state) {
-        state.PauseTiming();
-        std::vector<std::thread> producers;
-        producers.reserve(num_producers);
-        std::atomic_bool start{ false };
-        std::thread consumer(consumer_thread, &q, TOTAL_OPS, &start);
-        for (int i = 0; i < num_producers; ++i) {
-            producers.emplace_back(producer_thread_enqueue_bulk, &q, items_per_producer, &start);
-        }
-        state.ResumeTiming();
-        start.store(true, std::memory_order_release);
-        if (consumer.joinable()) {
-            consumer.join();
-        }
-        state.PauseTiming();
-        for (auto& p : producers) {
-            p.join();
-        }
-        state.ResumeTiming();
-    }
-
-    state.SetItemsProcessed(TOTAL_OPS * state.iterations());
-    state.SetLabel("P=" + std::to_string(num_producers) + ", C=1");
+    RunThroughputScenario(state, BenchmarkRunConfig{ (int)state.range(0), 0, false, true });
+    state.SetLabel("P=" + std::to_string((int)state.range(0)) + ", bulk");
 }
 
 BENCHMARK(BM_MPSC_Throughput_Bulk)
@@ -177,6 +172,30 @@ BENCHMARK(BM_MPSC_Throughput_Bulk)
     ->Args({ 2 })
     ->Args({ 4 })
     ->Args({ 8 })
+    ->Args({ 16 })
+    ->UseRealTime()
+    ->MinWarmUpTime(2.0);
+
+static void BM_MPSC_Throughput_ColdStart(benchmark::State& state) {
+    RunThroughputScenario(state, BenchmarkRunConfig{ (int)state.range(0), 0, true, false });
+    state.SetLabel("P=" + std::to_string((int)state.range(0)) + ", cold-shrink");
+}
+
+BENCHMARK(BM_MPSC_Throughput_ColdStart)
+    ->Args({ 1 })
+    ->Args({ 4 })
+    ->Args({ 16 })
+    ->UseRealTime()
+    ->MinWarmUpTime(2.0);
+
+static void BM_MPSC_Throughput_PreReserved(benchmark::State& state) {
+    RunThroughputScenario(state, BenchmarkRunConfig{ (int)state.range(0), 256, false, false });
+    state.SetLabel("P=" + std::to_string((int)state.range(0)) + ", pre-reserved");
+}
+
+BENCHMARK(BM_MPSC_Throughput_PreReserved)
+    ->Args({ 1 })
+    ->Args({ 4 })
     ->Args({ 16 })
     ->UseRealTime()
     ->MinWarmUpTime(2.0);

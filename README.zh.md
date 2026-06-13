@@ -203,47 +203,69 @@ Compiler: Clang 22.1.1 Release
 ```powershell
 cmake -S . -B out/build/clang-local -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
 cmake --build out/build/clang-local --target mpsc_vs_mpmc_benchmark
-.\out\build\clang-local\mpsc_vs_mpmc_benchmark.exe --benchmark_min_time=0.1s --benchmark_repetitions=1 --benchmark_counters_tabular=true
+.\out\build\clang-local\mpsc_vs_mpmc_benchmark.exe --benchmark_min_time=0.5s --benchmark_repetitions=1 --benchmark_counters_tabular=true
 ```
 
 均匀单元素入队：
 
 | 队列 | P (生产者) | C (消费者) | **吞吐量 (M items/s)** |
 | :--- | :--- | :--- | :--- |
-| **daking** | 1 | 1 | **86.78** |
-| daking | 2 | 1 | **32.29** |
-| daking | 4 | 1 | **32.52** |
-| daking | 8 | 1 | 31.16 |
-| moodycamel | 1 | 1 | 22.74 |
-| moodycamel | 2 | 1 | 27.82 |
-| moodycamel | 4 | 1 | 29.79 |
-| **moodycamel** | 8 | 1 | **32.07** |
+| **daking** | 1 | 1 | **82.21** |
+| daking | 2 | 1 | **29.69** |
+| daking | 4 | 1 | **32.22** |
+| daking | 8 | 1 | 28.22 |
+| moodycamel | 1 | 1 | 23.21 |
+| moodycamel | 2 | 1 | 28.50 |
+| moodycamel | 4 | 1 | 30.75 |
+| **moodycamel** | 8 | 1 | **30.86** |
 
 不均匀顺序爆发：
 
 | 队列 | P (生产者) | C (消费者) | 接力百分比 | **吞吐量 (M items/s)** |
 | :--- | :--- | :--- | :--- | :--- |
-| daking | 4 | 1 | $50.0\%$ | **33.89** |
-| daking | 4 | 1 | $90.0\%$ | **61.72** |
-| daking | 4 | 1 | $98.0\%$ | **73.72** |
-| moodycamel | 4 | 1 | $50.0\%$ | 23.84 |
-| moodycamel | 4 | 1 | $90.0\%$ | 22.25 |
-| moodycamel | 4 | 1 | $98.0\%$ | 17.64 |
+| daking | 4 | 1 | $50.0\%$ | **32.62** |
+| daking | 4 | 1 | $90.0\%$ | **58.54** |
+| daking | 4 | 1 | $98.0\%$ | **68.39** |
+| moodycamel | 4 | 1 | $50.0\%$ | 25.31 |
+| moodycamel | 4 | 1 | $90.0\%$ | 22.75 |
+| moodycamel | 4 | 1 | $98.0\%$ | 21.69 |
 
 批量入队：
 
 | 队列 | P (生产者) | C (消费者) | **吞吐量 (M items/s)** |
 | :--- | :--- | :--- | :--- |
-| **daking** | 1 | 1 | **102.25** |
-| **daking** | 2 | 1 | **102.37** |
-| **daking** | 4 | 1 | **85.23** |
-| **daking** | 8 | 1 | **77.16** |
-| moodycamel | 1 | 1 | 17.02 |
-| moodycamel | 2 | 1 | 18.85 |
-| moodycamel | 4 | 1 | 18.06 |
-| moodycamel | 8 | 1 | 16.02 |
+| **daking** | 1 | 1 | **167.47** |
+| **daking** | 2 | 1 | **191.27** |
+| **daking** | 4 | 1 | **195.14** |
+| **daking** | 8 | 1 | **159.11** |
+| moodycamel | 1 | 1 | 36.24 |
+| moodycamel | 2 | 1 | 36.23 |
+| moodycamel | 4 | 1 | 34.82 |
+| moodycamel | 8 | 1 | 33.99 |
 
-**第五部分：Enqueue/Dequeue Latency**
+**第五部分：内存生命周期基准测试（稳定模式 vs 空闲回收）**
+
+这个基准测试在同一个队列上连续执行两轮生产/清空 burst。`stable` 模式会保留第一轮之后的全局池热状态；`idle_reclaim` 模式会在第一轮后调用 `shrink_to_fit()`，再从回收后的状态执行下一轮 burst。
+
+运行命令：
+
+```powershell
+cmake --build out/build/clang-local --target mpsc_bench_memory_cycle
+.\out\build\clang-local\mpsc_bench_memory_cycle.exe --benchmark_min_time=0.2s --benchmark_repetitions=1 --benchmark_counters_tabular=true
+```
+
+| 模式 | P (生产者) | 回收前节点数 | 回收后节点数 | **吞吐量 (M items/s)** | Shrink 耗时 (us) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| stable | 1 | 16.384k | 16.384k | 96.69 | - |
+| stable | 4 | 16.384k | 16.384k | 32.20 | - |
+| stable | 16 | 32.768k | 32.768k | 37.54 | - |
+| idle_reclaim | 1 | 32.768k | 256 | 93.94 | 3.5 |
+| idle_reclaim | 4 | 32.768k | 256 | 31.98 | 5.5 |
+| idle_reclaim | 16 | 262.144k | 256 | 37.01 | 135.2 |
+
+空闲回收路径可以把全局池激进地回收到最小 chunk 数，同时下一轮 burst 的吞吐仍处在同一档。但它仍然应该被视为静止期操作，不是在线弹性回收机制。
+
+**第六部分：Enqueue/Dequeue Latency**
 
 (此部分基于HdrHistogram，在Linux平台测试)
 我们得到了以下延迟表现：
@@ -285,6 +307,8 @@ cmake --build out/build/clang-local --target mpsc_vs_mpmc_benchmark
 1.  如果还有任何MPSC_queue实例存活，则**无法释放内存**，因为所有节点已被自由地打乱和组合。
 2.  `ThreadLocalCapacity`（线程本地容量）在**编译时**已固定。
 3.  无法避免指针追逐，因为是纯链表结构。
+
+如果你需要在队列实例仍然存在时回收内存，可以在队列已经完全清空并且所有生产者停止之后调用 `shrink_to_fit()`。它是一个空闲期回收接口，不是并发缩容接口，也不是在线弹性回收设计。
 
 ## 特性 (FEATURES)
 

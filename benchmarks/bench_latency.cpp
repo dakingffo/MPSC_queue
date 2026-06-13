@@ -132,8 +132,36 @@ static void BM_MPSC_PureDequeueLatency(benchmark::State& state) {
     hdr_close(hist);
 }
 
+static void BM_MPSC_ShrinkToFitLatency(benchmark::State& state) {
+    hdr_histogram* hist;
+    hdr_init(1, 1000000, 3, &hist);
+
+    for (auto _ : state) {
+        TestQueue q;
+        TestQueue::reserve_global_chunk(64);
+        for (int i = 0; i < 10000; ++i) {
+            q.enqueue(i);
+        }
+        int val = 0;
+        while (q.try_dequeue(val)) {}
+        auto start = __rdtsc();
+        bool ok = q.shrink_to_fit();
+        auto end = __rdtsc();
+        if (!ok) {
+            state.SkipWithError("shrink_to_fit failed unexpectedly");
+            break;
+        }
+        hdr_record_value(hist, end - start);
+    }
+
+    state.counters["P99_ns"] = hdr_value_at_percentile(hist, 99.0) / CYCLES_PER_NS;
+    state.counters["P99.9_ns"] = hdr_value_at_percentile(hist, 99.9) / CYCLES_PER_NS;
+    hdr_close(hist);
+}
+
 BENCHMARK(BM_MPSC_PureEnqueueLatency)->Arg(1)->Arg(2)->Arg(4)->Arg(8)->Arg(16)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MPSC_PureDequeueLatency)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_MPSC_ShrinkToFitLatency)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_MAIN();
 

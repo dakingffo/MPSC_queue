@@ -51,6 +51,12 @@ set(HDR_HISTOGRAM_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(HDR_LOG_REQUIRED "DISABLED" CACHE STRING "" FORCE)
 FetchContent_MakeAvailable(hdrhistogram)
 
+if(TARGET hdr_histogram_static)
+    target_compile_options(hdr_histogram_static PRIVATE
+        $<$<C_COMPILER_ID:Clang>:-Wno-incompatible-pointer-types -Wno-deprecated-declarations>
+    )
+endif()
+
 # moodycamel ConcurrentQueue
 FetchContent_Declare(
     concurrentqueue
@@ -84,6 +90,34 @@ target_link_libraries(mpsc_bench_throughput
         ${ATOMIC_LIBRARY}
 )
 target_compile_options(mpsc_bench_throughput ${COMMON_TARGET_PROPERTIES})
+
+add_executable(mpsc_bench_memory_cycle benchmarks/bench_memory_cycle.cpp)
+target_include_directories(mpsc_bench_memory_cycle
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(mpsc_bench_memory_cycle
+    PRIVATE
+        benchmark::benchmark_main
+        Threads::Threads
+        ${ATOMIC_LIBRARY}
+)
+target_compile_options(mpsc_bench_memory_cycle ${COMMON_TARGET_PROPERTIES})
+
+add_executable(mpsc_bench_reclaim benchmarks/bench_reclaim.cpp)
+target_include_directories(mpsc_bench_reclaim
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(mpsc_bench_reclaim
+    PRIVATE
+        benchmark::benchmark_main
+        Threads::Threads
+        ${ATOMIC_LIBRARY}
+)
+target_compile_options(mpsc_bench_reclaim ${COMMON_TARGET_PROPERTIES})
 
 add_executable(mpsc_bench_latency benchmarks/bench_latency.cpp)
 target_include_directories(mpsc_bench_latency 

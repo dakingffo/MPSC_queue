@@ -203,47 +203,69 @@ Command:
 ```powershell
 cmake -S . -B out/build/clang-local -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
 cmake --build out/build/clang-local --target mpsc_vs_mpmc_benchmark
-.\out\build\clang-local\mpsc_vs_mpmc_benchmark.exe --benchmark_min_time=0.1s --benchmark_repetitions=1 --benchmark_counters_tabular=true
+.\out\build\clang-local\mpsc_vs_mpmc_benchmark.exe --benchmark_min_time=0.5s --benchmark_repetitions=1 --benchmark_counters_tabular=true
 ```
 
 Uniform single-element enqueue:
 
 | Queue | P (Producers) | C (Consumer) | **Throughput (M items/s)** |
 | :--- | :--- | :--- | :--- |
-| **daking** | 1 | 1 | **86.78** |
-| daking | 2 | 1 | **32.29** |
-| daking | 4 | 1 | **32.52** |
-| daking | 8 | 1 | 31.16 |
-| moodycamel | 1 | 1 | 22.74 |
-| moodycamel | 2 | 1 | 27.82 |
-| moodycamel | 4 | 1 | 29.79 |
-| **moodycamel** | 8 | 1 | **32.07** |
+| **daking** | 1 | 1 | **82.21** |
+| daking | 2 | 1 | **29.69** |
+| daking | 4 | 1 | **32.22** |
+| daking | 8 | 1 | 28.22 |
+| moodycamel | 1 | 1 | 23.21 |
+| moodycamel | 2 | 1 | 28.50 |
+| moodycamel | 4 | 1 | 30.75 |
+| **moodycamel** | 8 | 1 | **30.86** |
 
 Uneven sequential burst:
 
 | Queue | P (Producers) | C (Consumer) | Relay % | **Throughput (M items/s)** |
 | :--- | :--- | :--- | :--- | :--- |
-| daking | 4 | 1 | $50.0\%$ | **33.89** |
-| daking | 4 | 1 | $90.0\%$ | **61.72** |
-| daking | 4 | 1 | $98.0\%$ | **73.72** |
-| moodycamel | 4 | 1 | $50.0\%$ | 23.84 |
-| moodycamel | 4 | 1 | $90.0\%$ | 22.25 |
-| moodycamel | 4 | 1 | $98.0\%$ | 17.64 |
+| daking | 4 | 1 | $50.0\%$ | **32.62** |
+| daking | 4 | 1 | $90.0\%$ | **58.54** |
+| daking | 4 | 1 | $98.0\%$ | **68.39** |
+| moodycamel | 4 | 1 | $50.0\%$ | 25.31 |
+| moodycamel | 4 | 1 | $90.0\%$ | 22.75 |
+| moodycamel | 4 | 1 | $98.0\%$ | 21.69 |
 
 Bulk enqueue:
 
 | Queue | P (Producers) | C (Consumer) | **Throughput (M items/s)** |
 | :--- | :--- | :--- | :--- |
-| **daking** | 1 | 1 | **102.25** |
-| **daking** | 2 | 1 | **102.37** |
-| **daking** | 4 | 1 | **85.23** |
-| **daking** | 8 | 1 | **77.16** |
-| moodycamel | 1 | 1 | 17.02 |
-| moodycamel | 2 | 1 | 18.85 |
-| moodycamel | 4 | 1 | 18.06 |
-| moodycamel | 8 | 1 | 16.02 |
+| **daking** | 1 | 1 | **167.47** |
+| **daking** | 2 | 1 | **191.27** |
+| **daking** | 4 | 1 | **195.14** |
+| **daking** | 8 | 1 | **159.11** |
+| moodycamel | 1 | 1 | 36.24 |
+| moodycamel | 2 | 1 | 36.23 |
+| moodycamel | 4 | 1 | 34.82 |
+| moodycamel | 8 | 1 | 33.99 |
 
-**Part V: Enqueue/Dequeue Latency**
+**Part V: Memory Lifecycle Benchmark (Stable vs Idle Reclaim)**
+
+This benchmark runs two production/drain bursts on the same queue. The `stable` mode keeps the warm global pool between bursts. The `idle_reclaim` mode calls `shrink_to_fit()` after the first burst and then measures the next burst from the reclaimed state.
+
+Command:
+
+```powershell
+cmake --build out/build/clang-local --target mpsc_bench_memory_cycle
+.\out\build\clang-local\mpsc_bench_memory_cycle.exe --benchmark_min_time=0.2s --benchmark_repetitions=1 --benchmark_counters_tabular=true
+```
+
+| Mode | P (Producers) | Nodes Before | Nodes After | **Throughput (M items/s)** | Shrink Time (us) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| stable | 1 | 16.384k | 16.384k | 96.69 | - |
+| stable | 4 | 16.384k | 16.384k | 32.20 | - |
+| stable | 16 | 32.768k | 32.768k | 37.54 | - |
+| idle_reclaim | 1 | 32.768k | 256 | 93.94 | 3.5 |
+| idle_reclaim | 4 | 32.768k | 256 | 31.98 | 5.5 |
+| idle_reclaim | 16 | 262.144k | 256 | 37.01 | 135.2 |
+
+The idle reclaim path aggressively returns the global pool to the minimum chunk count while keeping the next burst in the same throughput band. It should still be treated as a quiescent-state operation, not an online elastic reclamation mechanism.
+
+**Part VI: Enqueue/Dequeue Latency**
 
 (Based on HdrHistogram, Test on Linux)
 We get below performance：
@@ -283,6 +305,8 @@ We get below performance：
 1.  Memory **cannot be freed** if any `MPSC_queue` instance is still alive, as all nodes have been freely shuffled and combined.
 2.  `ThreadLocalCapacity` (thread-local capacity) is fixed at **compile time**.
 3.  Pointer chasing cannot be avoided because it is a pure linked-list structure.
+
+If you need to reclaim memory while keeping the queue instance alive, call `shrink_to_fit()` only after the queue has been fully drained and all producers have stopped. This is an idle-time reclamation path, not a concurrent shrink path. It is intentionally conservative and is not designed for online elastic memory reclamation.
 
 ## Features
 

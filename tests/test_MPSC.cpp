@@ -97,6 +97,136 @@ TEST(MPSCQueueMemoryTest, ReserveGlobalChunk) {
 	EXPECT_EQ(Q::global_node_size_apprx(), reserved_size);
 }
 
+TEST(MPSCQueueMemoryTest, ShrinkToFit_ReclaimsPagesWhenIdle) {
+	using Q = MPSC_queue<int, 64>;
+	Q q;
+
+	Q::reserve_global_chunk(12);
+	size_t before = Q::global_node_size_apprx();
+	EXPECT_GE(before, (size_t)12 * 64);
+
+	int value = 0;
+	q.enqueue(7);
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_TRUE(q.empty());
+
+	EXPECT_TRUE(q.shrink_to_fit());
+	EXPECT_TRUE(q.empty());
+	EXPECT_EQ(Q::global_node_size_apprx(), (size_t)64);
+}
+
+TEST(MPSCQueueMemoryTest, ShrinkToFit_FailsWhenQueueIsNotEmpty) {
+	using Q = MPSC_queue<int, 64>;
+	Q q;
+
+	q.enqueue(7);
+	EXPECT_FALSE(q.shrink_to_fit());
+
+	int value = 0;
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_EQ(value, 7);
+	EXPECT_TRUE(q.empty());
+}
+
+TEST(MPSCQueueMemoryTest, ShrinkToFit_FailsWhileAnotherInstanceLives) {
+	using Q = MPSC_queue<int, 64>;
+	Q primary;
+
+	{
+		Q secondary;
+		int value = 0;
+
+		Q::reserve_global_chunk(4);
+		primary.enqueue(11);
+		EXPECT_TRUE(primary.try_dequeue(value));
+		EXPECT_TRUE(primary.empty());
+		EXPECT_FALSE(primary.shrink_to_fit());
+	}
+
+	EXPECT_TRUE(primary.shrink_to_fit());
+	EXPECT_EQ(Q::global_node_size_apprx(), (size_t)64);
+}
+
+TEST(MPSCQueueMemoryTest, ShrinkToFit_DisabledForStablePolicy) {
+	using StableQ = MPSC_queue<int, 64, 64, std::allocator<int>, daking::memory_policy::stable>;
+	StableQ q;
+
+	q.enqueue(9);
+	int value = 0;
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_TRUE(q.empty());
+
+	EXPECT_FALSE(q.shrink_to_fit());
+}
+
+TEST(MPSCQueueMemoryTest, ElasticPolicy_ReclaimsFullyFreePages) {
+	using ElasticQ = MPSC_queue<int, 8, 64, std::allocator<int>, daking::memory_policy::elastic>;
+	ElasticQ q;
+
+	ElasticQ::reserve_global_chunk(5);
+	const size_t before = ElasticQ::global_node_size_apprx();
+	EXPECT_GE(before, (size_t)5 * 8);
+
+	const size_t reclaimed = ElasticQ::reclaim_free_pages();
+	const size_t after = ElasticQ::global_node_size_apprx();
+
+	EXPECT_GT(reclaimed, (size_t)0);
+	EXPECT_EQ(after + reclaimed, before);
+	EXPECT_GE(after, (size_t)8);
+
+	q.enqueue(17);
+	int value = 0;
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_EQ(value, 17);
+	EXPECT_TRUE(q.empty());
+}
+
+TEST(MPSCQueueMemoryTest, ElasticPolicy_ReclaimsOnlyFullyFreePages) {
+	using ElasticQ = MPSC_queue<int, 8, 64, std::allocator<int>, daking::memory_policy::elastic>;
+	ElasticQ q;
+
+	ElasticQ::reserve_global_chunk(6);
+	const size_t before = ElasticQ::global_node_size_apprx();
+	EXPECT_GE(before, (size_t)6 * 8);
+
+	q.enqueue(31);
+	const size_t reclaimed = ElasticQ::reclaim_free_pages();
+	const size_t after = ElasticQ::global_node_size_apprx();
+
+	EXPECT_GT(reclaimed, (size_t)0);
+	EXPECT_LT(after, before);
+	EXPECT_GE(after, (size_t)8);
+
+	int value = 0;
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_EQ(value, 31);
+	EXPECT_TRUE(q.empty());
+
+	q.enqueue(32);
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_EQ(value, 32);
+	EXPECT_TRUE(q.empty());
+}
+
+TEST(MPSCQueueMemoryTest, ElasticPolicy_DoesNotReclaimLivePage) {
+	using ElasticQ = MPSC_queue<int, 16, 64, std::allocator<int>, daking::memory_policy::elastic>;
+	ElasticQ q;
+
+	const size_t initial = ElasticQ::global_node_size_apprx();
+	q.enqueue(23);
+
+	EXPECT_EQ(ElasticQ::reclaim_free_pages(), (size_t)0);
+	EXPECT_EQ(ElasticQ::global_node_size_apprx(), initial);
+
+	int value = 0;
+	EXPECT_TRUE(q.try_dequeue(value));
+	EXPECT_EQ(value, 23);
+	EXPECT_TRUE(q.empty());
+
+	EXPECT_EQ(ElasticQ::reclaim_free_pages(), (size_t)0);
+	EXPECT_EQ(ElasticQ::global_node_size_apprx(), initial);
+}
+
 // -------------------------------------------------------------------------
 // III. Bulk Operation Tests
 // -------------------------------------------------------------------------
